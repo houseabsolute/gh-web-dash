@@ -1,7 +1,7 @@
 "use strict";
 
 const POLL_MS = 15000;
-const STALE_AFTER_MS = 3 * 180 * 1000; // three default poll intervals
+const DEFAULT_STALE_AFTER_MS = 3 * 180 * 1000; // three default poll intervals
 
 let failuresOnly = false;
 let workflow = null;
@@ -124,8 +124,11 @@ async function loadStatus() {
       el.classList.remove("stale");
     } else {
       const age = Date.now() - new Date(s.last_success).getTime();
+      const staleAfterMs = s.poll_interval_secs
+        ? 3 * s.poll_interval_secs * 1000
+        : DEFAULT_STALE_AFTER_MS;
       el.textContent = "synced " + relTime(s.last_success);
-      el.classList.toggle("stale", age > STALE_AFTER_MS);
+      el.classList.toggle("stale", age > staleAfterMs);
     }
     // A cycle can "succeed" while every repository in it failed, so the error
     // count has to be shown alongside the sync time, not hidden behind it.

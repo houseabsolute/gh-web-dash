@@ -80,6 +80,7 @@ async fn main() -> Result<()> {
                     cfg.poll_interval_secs,
                     sync_state.snapshot().rate_limit_remaining,
                 );
+                sync_state.record_poll_interval(secs);
                 // Wake early if the browser asked for a sync.
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {}

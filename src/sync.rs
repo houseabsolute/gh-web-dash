@@ -22,6 +22,10 @@ pub struct SyncStatus {
     pub error_count: usize,
     pub rate_limit_remaining: Option<i64>,
     pub last_error: Option<String>,
+    /// The poll interval actually in effect for the next cycle, in seconds
+    /// (after any low-rate-limit backoff). The UI derives its staleness
+    /// threshold from this so backoff itself doesn't trip the alarm.
+    pub poll_interval_secs: Option<u64>,
 }
 
 /// Shared, cheaply cloneable sync status for the header.
@@ -51,6 +55,13 @@ impl SyncState {
 
     fn reset_errors(&self) {
         self.inner.lock().unwrap().error_count = 0;
+    }
+
+    /// Record the poll interval that will govern the next cycle's wait, so
+    /// the UI can size its staleness threshold off the real value instead of
+    /// a hardcoded default.
+    pub fn record_poll_interval(&self, secs: u64) {
+        self.inner.lock().unwrap().poll_interval_secs = Some(secs);
     }
 }
 
@@ -350,6 +361,14 @@ mod tests {
             .map(|r| r.full_name)
             .collect();
         assert_eq!(names, vec!["autarch/precious".to_string()]);
+    }
+
+    #[test]
+    fn poll_interval_is_recorded_for_the_status_endpoint() {
+        let state = SyncState::default();
+        assert_eq!(state.snapshot().poll_interval_secs, None);
+        state.record_poll_interval(600);
+        assert_eq!(state.snapshot().poll_interval_secs, Some(600));
     }
 
     #[test]
