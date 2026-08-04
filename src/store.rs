@@ -52,6 +52,61 @@ pub struct StoredRepo {
     pub default_branch: String,
 }
 
+/// The rolled-up state of a run, a workflow, or a repository.
+///
+/// The ordering IS the roll-up rule: a repository's health is the maximum over
+/// its workflows, so these must run least-bad to worst.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Health {
+    Success,
+    Neutral,
+    Running,
+    Failure,
+}
+
+impl Health {
+    pub fn of(status: &str, conclusion: Option<&str>) -> Health {
+        if status != "completed" {
+            return Health::Running;
+        }
+        match conclusion {
+            Some("success") => Health::Success,
+            Some("failure") | Some("timed_out") | Some("startup_failure") => Health::Failure,
+            // Cancelled, skipped, neutral, action_required: not broken, not green.
+            _ => Health::Neutral,
+        }
+    }
+}
+
+/// The latest run of one workflow, as the row and its expansion display it.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowSummary {
+    pub workflow_name: String,
+    pub health: Health,
+    pub branch: String,
+    pub commit_subject: String,
+    pub html_url: String,
+    pub started_at: String,
+}
+
+/// One repository row.
+#[derive(Debug, Clone, Serialize)]
+pub struct RepoSummary {
+    pub full_name: String,
+    pub health: Health,
+    /// The newest `started_at` across the workflows below. Drives the sort.
+    pub started_at: String,
+    pub workflows: Vec<WorkflowSummary>,
+}
+
+/// One workflow's recent runs, newest first — the expansion's history strip.
+#[derive(Debug, Clone, Serialize)]
+pub struct WorkflowHistory {
+    pub workflow_name: String,
+    pub runs: Vec<StoredRun>,
+}
+
 #[derive(Debug, Clone)]
 pub struct RunQuery {
     pub failures_only: bool,
@@ -280,6 +335,135 @@ impl Store {
             .query_map(refs.as_slice(), |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
+    }
+
+    /// One row per non-ignored repository that has runs, carrying the latest
+    /// run of each of its workflows. Sorted newest activity first.
+    pub fn repo_summaries(&self, failures_only: bool) -> Result<Vec<RepoSummary>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT repo_full_name, workflow_name, status, conclusion, branch,
+                    commit_subject, html_url, started_at
+             FROM (
+                 SELECT runs.repo_full_name, runs.workflow_name, runs.status, runs.conclusion,
+                        runs.branch, runs.commit_subject, runs.html_url, runs.started_at,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY runs.repo_full_name, runs.workflow_name
+                            ORDER BY runs.started_at DESC, runs.id DESC
+                        ) AS rn
+                 FROM runs
+                 JOIN repos ON repos.full_name = runs.repo_full_name
+                 WHERE repos.ignored = 0
+             )
+             WHERE rn = 1
+             ORDER BY repo_full_name, workflow_name",
+        )?;
+
+        // (repo, workflow-summary) pairs, grouped below. The query already
+        // orders by repo, so groups arrive contiguously.
+        let rows = stmt
+            .query_map([], |row| {
+                let status: String = row.get(2)?;
+                let conclusion: Option<String> = row.get(3)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    WorkflowSummary {
+                        workflow_name: row.get(1)?,
+                        health: Health::of(&status, conclusion.as_deref()),
+                        branch: row.get(4)?,
+                        commit_subject: row.get(5)?,
+                        html_url: row.get(6)?,
+                        started_at: row.get(7)?,
+                    },
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut summaries: Vec<RepoSummary> = Vec::new();
+        for (repo, wf) in rows {
+            match summaries.last_mut() {
+                Some(last) if last.full_name == repo => {
+                    last.health = last.health.max(wf.health);
+                    if wf.started_at > last.started_at {
+                        last.started_at = wf.started_at.clone();
+                    }
+                    last.workflows.push(wf);
+                }
+                _ => summaries.push(RepoSummary {
+                    full_name: repo,
+                    health: wf.health,
+                    started_at: wf.started_at.clone(),
+                    workflows: vec![wf],
+                }),
+            }
+        }
+
+        if failures_only {
+            summaries.retain(|r| r.health == Health::Failure);
+        }
+        // Newest activity first; name as a stable tiebreak.
+        summaries.sort_by(|a, b| {
+            b.started_at
+                .cmp(&a.started_at)
+                .then_with(|| a.full_name.cmp(&b.full_name))
+        });
+        Ok(summaries)
+    }
+
+    /// Recent runs for one repository, grouped by workflow, newest first within
+    /// each group and capped at `per_workflow` each.
+    pub fn repo_history(
+        &self,
+        full_name: &str,
+        per_workflow: usize,
+    ) -> Result<Vec<WorkflowHistory>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT id, repo_full_name, workflow_name, branch, actor, status, conclusion,
+                    commit_sha, commit_subject, html_url, started_at
+             FROM (
+                 SELECT runs.*,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY runs.workflow_name
+                            ORDER BY runs.started_at DESC, runs.id DESC
+                        ) AS rn
+                 FROM runs
+                 JOIN repos ON repos.full_name = runs.repo_full_name
+                 WHERE repos.ignored = 0 AND runs.repo_full_name = ?1
+             )
+             WHERE rn <= ?2
+             ORDER BY workflow_name, started_at DESC, id DESC",
+        )?;
+
+        let rows = stmt
+            .query_map(params![full_name, per_workflow as i64], |row| {
+                Ok(StoredRun {
+                    id: row.get(0)?,
+                    repo_full_name: row.get(1)?,
+                    workflow_name: row.get(2)?,
+                    branch: row.get(3)?,
+                    actor: row.get(4)?,
+                    status: row.get(5)?,
+                    conclusion: row.get(6)?,
+                    commit_sha: row.get(7)?,
+                    commit_subject: row.get(8)?,
+                    html_url: row.get(9)?,
+                    started_at: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        let mut out: Vec<WorkflowHistory> = Vec::new();
+        for run in rows {
+            match out.last_mut() {
+                Some(last) if last.workflow_name == run.workflow_name => last.runs.push(run),
+                _ => out.push(WorkflowHistory {
+                    workflow_name: run.workflow_name.clone(),
+                    runs: vec![run],
+                }),
+            }
+        }
+        Ok(out)
     }
 
     /// Delete runs started before an RFC 3339 cutoff. Returns the number removed.
