@@ -30,6 +30,16 @@ globs matched against `owner/repo` removes noisy or archived repositories.
 Auto-discovery means new repositories appear without config changes; the
 ignore-list handles the ones that should not.
 
+Ignoring a repository removes it from the feed immediately, not just from future
+polling. Its already-stored runs and its workflow name disappear from the view as
+well — otherwise the user adds a noisy repository to the list, sees it keep
+scrolling past for another 30 days, and concludes the feature is broken.
+
+A repository that discovery stops returning — deleted, or access lost — is
+marked ignored too. Without that, its row lives forever, costing one failed
+request per cycle and pinning the error count permanently above zero, which
+teaches the user to ignore the very indicator that signals real trouble.
+
 ## Scope of runs
 
 The feed shows runs on each repository's default branch, plus runs on branches
@@ -55,19 +65,29 @@ anyway.
 
 ## Architecture
 
-Five modules, each independently testable:
+Seven modules, each independently testable:
 
 - **`config`** — parses `~/.config/gh-web-dash/config.toml`. Pure, aside from the
   file read.
 - **`auth`** — resolves a token: `gh auth token` via subprocess, falling back to
   `$GITHUB_TOKEN`. If neither yields a token, errors naming both options. The
   subprocess call is injected so the resolution logic is testable.
+- **`filter`** — pure predicate deciding which runs belong in the feed. Extracted
+  from `sync` because it is where the subtle bugs live and it deserves tests of
+  its own.
 - **`github`** — API client. Lists repositories; fetches recent workflow runs per
-  repository. Owns ETags, 304 handling, and rate-limit backoff. Takes an HTTP
-  client as a dependency.
+  repository. Owns ETags and 304 handling, and reports rate-limit headers to its
+  caller rather than deciding backoff policy itself. Takes an HTTP client as a
+  dependency.
 - **`store`** — SQLite via `rusqlite`. Owns the schema and every query. No other
   module writes SQL.
-- **`server`** — axum routes, HTML rendering, and the background poll loop.
+- **`sync`** — one cycle: discovery, fetch, filter, upsert, prune. Owns
+  rate-limit backoff and the `SyncState` the header reads.
+- **`server`** — axum routes and HTML rendering.
+
+The background poll loop lives in `main`, not `server`. Keeping it out of
+`server` means the router can be constructed and tested without a running poll
+loop, which is what makes the HTTP integration tests simple.
 
 **Data flow:** poller → `github` → `store`; browser → `store`. The request path
 never touches the GitHub API. This keeps page loads fast and makes a GitHub
@@ -115,26 +135,39 @@ never aborts a cycle.
 
 ## HTTP surface
 
-- `GET /` — page shell: header, filter chips, empty table. Server-rendered HTML
-  with one embedded CSS file and one embedded JS file. No build step, no npm.
+- `GET /` — page shell: header, filter chips, empty table.
+- `GET /app.css`, `GET /app.js` — the stylesheet and script, served as separate
+  routes. All three files are compiled into the binary with `include_str!`, so
+  there is still a single artifact, no build step, and no npm.
 - `GET /api/runs?failures_only=&workflow=&repo=` — JSON, newest first, capped at
-  200 rows. Reads SQLite only.
+  200 rows. Reads SQLite only. Also returns the workflow names for the chip list,
+  derived from the same query minus the `workflow` filter itself — filtering by
+  one workflow must not collapse the list to a single chip.
 - `POST /api/sync` — triggers an immediate sync, returning immediately. Guarded
   so overlapping syncs cannot stack.
-- `GET /api/status` — last sync time, rate-limit remaining, error count.
+- `GET /api/status` — last sync time, rate-limit remaining, error count, last
+  error, and the effective poll interval.
 
 ## Browser behavior
 
 The page fetches `/api/runs` every 15 seconds and re-renders the table body. No
-SSE, no websockets. Chip filtering is client-side over the rows already loaded,
-so it is instant.
+SSE, no websockets. Clicking a chip re-queries rather than filtering the loaded
+rows client-side: the row cap is 200, so filtering in the browser would only ever
+search the most recent 200 runs instead of the whole retained window.
 
 The header shows last-sync time, a **Refresh now** button hitting `/api/sync`,
 and a rate-limit indicator that appears only when degraded.
 
 **Staleness is visible.** If the last successful sync is older than three poll
-intervals, the header turns amber and says so. A green board silently showing
-hour-old data is worse than one that is obviously broken.
+intervals, the header turns amber and says so. The threshold follows the
+configured interval — and the doubled interval when rate-limit backoff is active
+— rather than assuming the default. A green board silently showing hour-old data
+is worse than one that is obviously broken.
+
+For this to hold, "last successful sync" must mean a cycle in which at least one
+repository was actually fetched. A cycle in which every repository failed is not
+a success: stamping it as one would keep the header green through a total GitHub
+outage. The error count is shown alongside the sync time, not instead of it.
 
 A failed `/api/runs` poll leaves the last-good table on screen and marks the
 header stale. The page never blanks on a transient error.
