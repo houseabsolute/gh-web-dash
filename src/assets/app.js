@@ -4,109 +4,65 @@ const POLL_MS = 15000;
 const DEFAULT_STALE_AFTER_MS = 3 * 180 * 1000; // three default poll intervals
 
 let failuresOnly = false;
-let workflow = null;
-
-function dotClass(run) {
-  if (run.status !== "completed") return "run";
-  if (run.conclusion === "success") return "ok";
-  if (["failure", "timed_out", "startup_failure"].includes(run.conclusion)) return "bad";
-  return "other";
-}
-
-function relTime(iso) {
-  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
-  if (secs < 60) return Math.floor(secs) + "s ago";
-  if (secs < 3600) return Math.floor(secs / 60) + "m ago";
-  if (secs < 86400) return Math.floor(secs / 3600) + "h ago";
-  return Math.floor(secs / 86400) + "d ago";
-}
-
-function renderChips(workflows) {
-  const chips = document.getElementById("chips");
-  const wanted = ["__all__", "__failures__"].concat(workflows);
-  // Rebuild only when the set of chips changed, so clicks are not lost mid-poll.
-  const key = JSON.stringify(wanted);
-  if (chips.dataset.keys === key) {
-    updateChipState();
-    return;
-  }
-  chips.dataset.keys = key;
-  chips.innerHTML = "";
-  chips.appendChild(makeChip("All", () => { failuresOnly = false; workflow = null; }, "all"));
-  chips.appendChild(makeChip("Failures only", () => { failuresOnly = !failuresOnly; }, "failures"));
-  for (const w of workflows) {
-    chips.appendChild(makeChip(w, () => { workflow = workflow === w ? null : w; }, "wf:" + w));
-  }
-  updateChipState();
-}
-
-function makeChip(label, onClick, key) {
-  const b = document.createElement("button");
-  b.className = "chip";
-  b.type = "button";
-  b.textContent = label;
-  b.dataset.key = key;
-  b.addEventListener("click", () => {
-    onClick();
-    updateChipState();
-    load();
-  });
-  return b;
-}
+/// Repositories whose rows are open. Survives re-renders — a row that collapsed
+/// on every poll would make the expansion useless.
+const expanded = new Set();
+/// full_name -> [{workflow_name, runs}]
+const history = new Map();
+let lastRepos = [];
 
 function updateChipState() {
   for (const b of document.querySelectorAll(".chip")) {
-    const k = b.dataset.key;
-    let on = false;
-    if (k === "all") on = !failuresOnly && workflow === null;
-    else if (k === "failures") on = failuresOnly;
-    else if (k.startsWith("wf:")) on = workflow === k.slice(3);
+    const on = b.dataset.key === "failures" ? failuresOnly : !failuresOnly;
     b.classList.toggle("on", on);
   }
 }
 
-function renderRows(runs) {
-  const tbody = document.getElementById("rows");
-  tbody.innerHTML = "";
-  for (const run of runs) {
-    const tr = document.createElement("tr");
-    const cells = [
-      ['<span class="dot ' + dotClass(run) + '"></span>', ""],
-      [run.repo_full_name, "repo"],
-      [run.workflow_name, "mono muted"],
-      [run.branch, "mono muted"],
-      [relTime(run.started_at), ""],
-    ];
-    cells.forEach(([content, cls], i) => {
-      const td = document.createElement("td");
-      if (i === 4) td.className = "time";
-      const a = document.createElement("a");
-      a.href = run.html_url;
-      a.target = "_blank";
-      a.rel = "noopener";
-      if (i === 0) a.innerHTML = content;
-      else { a.textContent = content; a.className = cls; }
-      td.appendChild(a);
-      tr.appendChild(td);
-    });
-    tbody.appendChild(tr);
+for (const b of document.querySelectorAll(".chip")) {
+  b.addEventListener("click", () => {
+    failuresOnly = b.dataset.key === "failures" ? !failuresOnly : false;
+    updateChipState();
+    load();
+  });
+}
+
+async function toggleRepo(fullName) {
+  if (expanded.has(fullName)) {
+    expanded.delete(fullName);
+    renderRepos(lastRepos);
+    return;
   }
-  document.getElementById("empty").classList.toggle("hidden", runs.length > 0);
+  expanded.add(fullName);
+  renderRepos(lastRepos); // open immediately; the strip fills in when it arrives
+  await loadHistory(fullName);
+  renderRepos(lastRepos);
+}
+
+async function loadHistory(fullName) {
+  try {
+    const resp = await fetch("/api/history?repo=" + encodeURIComponent(fullName));
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const data = await resp.json();
+    history.set(fullName, data.workflows);
+  } catch (e) {
+    console.warn("history fetch failed", fullName, e);
+  }
 }
 
 async function load() {
   const params = new URLSearchParams();
   if (failuresOnly) params.set("failures_only", "true");
-  if (workflow) params.set("workflow", workflow);
   try {
-    const resp = await fetch("/api/runs?" + params.toString());
+    const resp = await fetch("/api/repos?" + params.toString());
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
-    renderChips(data.workflows);
-    renderRows(data.runs);
+    lastRepos = data.repos;
+    // Keep open rows live without fetching history for the other ~99.
+    await Promise.all([...expanded].map(loadHistory));
+    renderRepos(lastRepos);
   } catch (e) {
-    // Leave the last-good table on screen; the header will show staleness.
-    console.warn("runs fetch failed", e);
+    // Leave the last-good table on screen; the header shows staleness.
+    console.warn("repos fetch failed", e);
   }
   await loadStatus();
 }
@@ -134,7 +90,8 @@ async function loadStatus() {
     // count has to be shown alongside the sync time, not hidden behind it.
     errs.classList.toggle("hidden", !s.error_count);
     if (s.error_count) {
-      errs.textContent = s.error_count + (s.error_count === 1 ? " repo failing" : " repos failing");
+      errs.textContent =
+        s.error_count + (s.error_count === 1 ? " repo failing" : " repos failing");
       errs.title = s.last_error || "";
     }
     const low = s.rate_limit_remaining !== null && s.rate_limit_remaining < 500;

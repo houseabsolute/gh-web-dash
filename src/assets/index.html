@@ -8,7 +8,10 @@
   <body>
     <header>
       <h1>gh-web-dash</h1>
-      <div id="chips" class="chips"></div>
+      <div id="chips" class="chips">
+        <button class="chip on" type="button" data-key="all">All</button>
+        <button class="chip" type="button" data-key="failures">Failures only</button>
+      </div>
       <div class="spacer"></div>
       <span id="staleness" class="status"></span>
       <span id="errors" class="status warn hidden"></span>
@@ -18,7 +21,8 @@
     <table>
       <tbody id="rows"></tbody>
     </table>
-    <p id="empty" class="empty hidden">No runs yet — the first sync is still working.</p>
+    <p id="empty" class="empty hidden">No repositories yet — the first sync is still working.</p>
+    <script src="/render.js"></script>
     <script src="/app.js"></script>
   </body>
 </html>
