@@ -66,9 +66,18 @@ pub fn effective_interval(base_secs: u64, remaining: Option<i64>) -> u64 {
 pub async fn discover_repos(client: &Client, store: &Store, cfg: &Config) -> Result<()> {
     let matcher = cfg.ignore_matcher()?;
     let repos = client.list_repos(cfg.include_orgs).await?;
-    for r in repos {
+    let seen: std::collections::HashSet<String> =
+        repos.iter().map(|r| r.full_name.clone()).collect();
+    for r in &repos {
         store.upsert_repo(&r.full_name, &r.default_branch)?;
         store.set_repo_ignored(&r.full_name, matcher.is_ignored(&r.full_name))?;
+    }
+    // A repository that is no longer returned by discovery has been deleted,
+    // renamed, or the token has lost access — either way, stop polling it.
+    for name in store.all_repo_names()? {
+        if !seen.contains(&name) {
+            store.set_repo_ignored(&name, true)?;
+        }
     }
     Ok(())
 }
@@ -302,6 +311,35 @@ mod tests {
         let store = crate::store::Store::open_in_memory().unwrap();
         let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
         let cfg = crate::config::Config::from_toml(r#"ignore = ["autarch/old-*"]"#).unwrap();
+
+        discover_repos(&client, &store, &cfg).await.unwrap();
+
+        let names: Vec<_> = store
+            .active_repos()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.full_name)
+            .collect();
+        assert_eq!(names, vec!["autarch/precious".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn discovery_ignores_repos_no_longer_returned() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user/repos"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"full_name": "autarch/precious", "default_branch": "main"}
+            ])))
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        // Simulate a repo stored from an earlier cycle that has since vanished
+        // (deleted, or access revoked).
+        store.upsert_repo("autarch/vanished", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let cfg = crate::config::Config::from_toml("").unwrap();
 
         discover_repos(&client, &store, &cfg).await.unwrap();
 

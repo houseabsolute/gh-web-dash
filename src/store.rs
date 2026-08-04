@@ -148,6 +148,16 @@ impl Store {
         Ok(())
     }
 
+    /// Every stored repository's full name, ignored or not.
+    pub fn all_repo_names(&self) -> Result<Vec<String>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare("SELECT full_name FROM repos")?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
     pub fn active_repos(&self) -> Result<Vec<StoredRepo>> {
         let conn = self.conn();
         let mut stmt = conn.prepare(
