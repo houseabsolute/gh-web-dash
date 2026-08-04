@@ -1,1 +1,299 @@
+use std::sync::{Arc, Mutex};
 
+use anyhow::Result;
+use chrono::{Duration, Utc};
+use serde::Serialize;
+
+use crate::config::Config;
+use crate::filter::{should_keep, RunCandidate};
+use crate::github::Client;
+use crate::store::{Store, StoredRun};
+
+/// Below this many remaining API calls, back off.
+const RATE_LIMIT_FLOOR: i64 = 500;
+/// How long runs are kept.
+const RETENTION_DAYS: i64 = 30;
+/// How often repository discovery runs, relative to the run sync.
+pub const DISCOVERY_INTERVAL_SECS: u64 = 3600;
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct SyncStatus {
+    pub last_success: Option<String>,
+    pub error_count: usize,
+    pub rate_limit_remaining: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+/// Shared, cheaply cloneable sync status for the header.
+#[derive(Clone, Default)]
+pub struct SyncState {
+    inner: Arc<Mutex<SyncStatus>>,
+}
+
+impl SyncState {
+    pub fn snapshot(&self) -> SyncStatus {
+        self.inner.lock().unwrap().clone()
+    }
+
+    fn record_success(&self, rate_limit: Option<i64>) {
+        let mut s = self.inner.lock().unwrap();
+        s.last_success = Some(Utc::now().to_rfc3339());
+        if rate_limit.is_some() {
+            s.rate_limit_remaining = rate_limit;
+        }
+    }
+
+    fn record_error(&self, msg: String) {
+        let mut s = self.inner.lock().unwrap();
+        s.error_count += 1;
+        s.last_error = Some(msg);
+    }
+
+    fn reset_errors(&self) {
+        self.inner.lock().unwrap().error_count = 0;
+    }
+}
+
+/// Double the interval when the rate limit is running low.
+pub fn effective_interval(base_secs: u64, remaining: Option<i64>) -> u64 {
+    match remaining {
+        Some(r) if r < RATE_LIMIT_FLOOR => base_secs * 2,
+        _ => base_secs,
+    }
+}
+
+/// Fetch the repository list and record it, marking ignored ones.
+pub async fn discover_repos(client: &Client, store: &Store, cfg: &Config) -> Result<()> {
+    let matcher = cfg.ignore_matcher()?;
+    let repos = client.list_repos(cfg.include_orgs).await?;
+    for r in repos {
+        store.upsert_repo(&r.full_name, &r.default_branch)?;
+        store.set_repo_ignored(&r.full_name, matcher.is_ignored(&r.full_name))?;
+    }
+    Ok(())
+}
+
+/// One pass over every active repository. Errors are counted, never fatal.
+pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, current_user: &str) {
+    let repos = match store.active_repos() {
+        Ok(r) => r,
+        Err(e) => {
+            state.record_error(format!("cannot read repositories: {e}"));
+            return;
+        }
+    };
+
+    state.reset_errors();
+    let mut last_rate_limit = None;
+
+    for repo in repos {
+        let etag = store.repo_etag(&repo.full_name).ok().flatten();
+        let resp = match client.list_runs(&repo.full_name, etag.as_deref()).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                let msg = if e.is_unauthorized() {
+                    "GitHub rejected the token — run `gh auth login` to refresh it".to_string()
+                } else {
+                    format!("{}: {e}", repo.full_name)
+                };
+                tracing::warn!("{msg}");
+                state.record_error(msg);
+                continue;
+            }
+        };
+
+        if resp.rate_limit_remaining.is_some() {
+            last_rate_limit = resp.rate_limit_remaining;
+        }
+        if let Some(tag) = &resp.etag {
+            let _ = store.set_repo_etag(&repo.full_name, tag);
+        }
+
+        for run in resp.runs {
+            let candidate = RunCandidate {
+                branch: run.head_branch.clone(),
+                actor_login: run.actor.login.clone(),
+                actor_type: run.actor.r#type.clone(),
+            };
+            if !should_keep(&candidate, &repo.default_branch, current_user) {
+                continue;
+            }
+            let stored = StoredRun {
+                id: run.id,
+                repo_full_name: repo.full_name.clone(),
+                workflow_name: run.workflow_name.clone(),
+                branch: run.head_branch.clone(),
+                actor: run.actor.login.clone(),
+                status: run.status.clone(),
+                conclusion: run.conclusion.clone(),
+                commit_sha: run.head_sha.clone(),
+                commit_subject: run.commit_subject(),
+                html_url: run.html_url.clone(),
+                started_at: run.started_at(),
+            };
+            if let Err(e) = store.upsert_run(&stored) {
+                tracing::warn!("failed to store run {}: {e}", run.id);
+                state.record_error(format!("failed to store run {}: {e}", run.id));
+            }
+        }
+    }
+
+    let cutoff = (Utc::now() - Duration::days(RETENTION_DAYS)).to_rfc3339();
+    if let Err(e) = store.prune_before(&cutoff) {
+        tracing::warn!("prune failed: {e}");
+    }
+
+    state.record_success(last_rate_limit);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn runs_body(id: i64, branch: &str, login: &str, actor_type: &str) -> serde_json::Value {
+        serde_json::json!({
+            "workflow_runs": [{
+                "id": id,
+                "name": "test.yml",
+                "head_branch": branch,
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": "abc123",
+                "html_url": format!("https://github.com/autarch/a/actions/runs/{id}"),
+                "run_started_at": "2026-08-04T10:00:00Z",
+                "updated_at": "2026-08-04T10:05:00Z",
+                "actor": {"login": login, "type": actor_type},
+                "head_commit": {"message": "Do a thing"}
+            }]
+        })
+    }
+
+    #[tokio::test]
+    async fn stores_kept_runs_and_drops_bot_runs() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/a/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(runs_body(1, "main", "autarch", "User")),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/b/actions/runs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(runs_body(
+                2,
+                "dependabot/x",
+                "dependabot[bot]",
+                "Bot",
+            )))
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/a", "main").unwrap();
+        store.upsert_repo("autarch/b", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        sync_runs(&client, &store, &state, "autarch").await;
+
+        let rows = store
+            .recent_runs(&crate::store::RunQuery::default())
+            .unwrap();
+        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1]);
+        assert_eq!(state.snapshot().error_count, 0);
+    }
+
+    #[tokio::test]
+    async fn one_failing_repo_does_not_stop_the_cycle() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/gone/actions/runs"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/ok/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(runs_body(7, "main", "autarch", "User")),
+            )
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/gone", "main").unwrap();
+        store.upsert_repo("autarch/ok", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        sync_runs(&client, &store, &state, "autarch").await;
+
+        let rows = store
+            .recent_runs(&crate::store::RunQuery::default())
+            .unwrap();
+        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![7]);
+        assert_eq!(state.snapshot().error_count, 1);
+        assert!(state.snapshot().last_success.is_some());
+    }
+
+    #[tokio::test]
+    async fn stores_etag_and_sends_it_next_time() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/a/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("etag", "W/\"abc\"")
+                    .set_body_json(runs_body(1, "main", "autarch", "User")),
+            )
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/a", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        sync_runs(&client, &store, &state, "autarch").await;
+        assert_eq!(
+            store.repo_etag("autarch/a").unwrap(),
+            Some("W/\"abc\"".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn discovery_marks_ignored_repos() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/user/repos"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                {"full_name": "autarch/precious", "default_branch": "main"},
+                {"full_name": "autarch/old-junk", "default_branch": "main"}
+            ])))
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let cfg = crate::config::Config::from_toml(r#"ignore = ["autarch/old-*"]"#).unwrap();
+
+        discover_repos(&client, &store, &cfg).await.unwrap();
+
+        let names: Vec<_> = store
+            .active_repos()
+            .unwrap()
+            .into_iter()
+            .map(|r| r.full_name)
+            .collect();
+        assert_eq!(names, vec!["autarch/precious".to_string()]);
+    }
+
+    #[test]
+    fn poll_interval_doubles_when_rate_limit_is_low() {
+        assert_eq!(effective_interval(180, Some(4000)), 180);
+        assert_eq!(effective_interval(180, Some(499)), 360);
+        assert_eq!(effective_interval(180, None), 180);
+    }
+}
