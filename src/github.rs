@@ -3,7 +3,10 @@ use serde::Deserialize;
 
 pub const GITHUB_API: &str = "https://api.github.com";
 const USER_AGENT: &str = "gh-web-dash";
-const RUNS_PER_REPO: usize = 20;
+// Fetched per repository across ALL its workflows, so a repo with three
+// workflows yields roughly a third of this each — enough to fill the history
+// strips. Same request count as 20; ETags keep warm cycles free.
+const RUNS_PER_REPO: usize = 50;
 const REPOS_PER_PAGE: usize = 100;
 const REQUEST_TIMEOUT_SECS: u64 = 30;
 
