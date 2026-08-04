@@ -6,14 +6,16 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 
-use crate::store::{RunQuery, Store, StoredRun};
+use crate::store::{RepoSummary, Store, WorkflowHistory};
 use crate::sync::{SyncState, SyncStatus};
 
-const MAX_ROWS: usize = 200;
+/// Runs per workflow in an expansion's history strip.
+const HISTORY_PER_WORKFLOW: usize = 10;
 
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
+const RENDER_JS: &str = include_str!("assets/render.js");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -24,17 +26,24 @@ pub struct AppState {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct RunsParams {
+pub struct ReposParams {
     #[serde(default)]
     pub failures_only: Option<bool>,
-    pub workflow: Option<String>,
-    pub repo: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct HistoryParams {
+    pub repo: String,
 }
 
 #[derive(Serialize)]
-pub struct RunsResponse {
-    pub runs: Vec<StoredRun>,
-    pub workflows: Vec<String>,
+pub struct ReposResponse {
+    pub repos: Vec<RepoSummary>,
+}
+
+#[derive(Serialize)]
+pub struct HistoryResponse {
+    pub workflows: Vec<WorkflowHistory>,
 }
 
 pub fn router(state: AppState) -> Router {
@@ -42,7 +51,9 @@ pub fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
-        .route("/api/runs", get(runs))
+        .route("/render.js", get(render_js))
+        .route("/api/repos", get(repos))
+        .route("/api/history", get(history))
         .route("/api/status", get(status))
         .route("/api/sync", post(trigger_sync))
         .with_state(state)
@@ -60,22 +71,36 @@ async fn app_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/javascript")], APP_JS)
 }
 
-async fn runs(
+async fn render_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/javascript")], RENDER_JS)
+}
+
+async fn repos(
     State(state): State<AppState>,
-    Query(params): Query<RunsParams>,
-) -> Result<Json<RunsResponse>, StatusCode> {
-    let q = RunQuery {
-        failures_only: params.failures_only.unwrap_or(false),
-        workflow: params.workflow,
-        repo: params.repo,
-        limit: MAX_ROWS,
-    };
-    let runs = state.store.recent_runs(&q).map_err(|e| {
-        tracing::error!("query failed: {e}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
-    let workflows = state.store.workflow_names_for_query(&q).unwrap_or_default();
-    Ok(Json(RunsResponse { runs, workflows }))
+    Query(params): Query<ReposParams>,
+) -> Result<Json<ReposResponse>, StatusCode> {
+    let repos = state
+        .store
+        .repo_summaries(params.failures_only.unwrap_or(false))
+        .map_err(|e| {
+            tracing::error!("repo summary query failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(ReposResponse { repos }))
+}
+
+async fn history(
+    State(state): State<AppState>,
+    Query(params): Query<HistoryParams>,
+) -> Result<Json<HistoryResponse>, StatusCode> {
+    let workflows = state
+        .store
+        .repo_history(&params.repo, HISTORY_PER_WORKFLOW)
+        .map_err(|e| {
+            tracing::error!("history query failed: {e}");
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?;
+    Ok(Json(HistoryResponse { workflows }))
 }
 
 async fn status(State(state): State<AppState>) -> Json<SyncStatus> {

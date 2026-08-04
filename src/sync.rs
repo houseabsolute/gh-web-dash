@@ -176,6 +176,22 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// Every run id stored across all active repositories, in whatever order
+    /// the history query returns them — good enough for asserting which runs
+    /// made it into the store.
+    fn all_run_ids(store: &Store) -> Vec<i64> {
+        let mut ids: Vec<i64> = store
+            .active_repos()
+            .unwrap()
+            .into_iter()
+            .flat_map(|r| store.repo_history(&r.full_name, 100).unwrap())
+            .flat_map(|h| h.runs)
+            .map(|r| r.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    }
+
     fn runs_body(id: i64, branch: &str, login: &str, actor_type: &str) -> serde_json::Value {
         serde_json::json!({
             "workflow_runs": [{
@@ -223,10 +239,8 @@ mod tests {
 
         sync_runs(&client, &store, &state, "autarch").await;
 
-        let rows = store
-            .recent_runs(&crate::store::RunQuery::default())
-            .unwrap();
-        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1]);
+        let ids = all_run_ids(&store);
+        assert_eq!(ids, vec![1]);
         assert_eq!(state.snapshot().error_count, 0);
     }
 
@@ -274,10 +288,8 @@ mod tests {
 
         sync_runs(&client, &store, &state, "autarch").await;
 
-        let rows = store
-            .recent_runs(&crate::store::RunQuery::default())
-            .unwrap();
-        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![7]);
+        let ids = all_run_ids(&store);
+        assert_eq!(ids, vec![7]);
         assert_eq!(state.snapshot().error_count, 1);
         assert!(state.snapshot().last_success.is_some());
     }

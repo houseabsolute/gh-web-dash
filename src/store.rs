@@ -107,25 +107,6 @@ pub struct WorkflowHistory {
     pub runs: Vec<StoredRun>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RunQuery {
-    pub failures_only: bool,
-    pub workflow: Option<String>,
-    pub repo: Option<String>,
-    pub limit: usize,
-}
-
-impl Default for RunQuery {
-    fn default() -> Self {
-        RunQuery {
-            failures_only: false,
-            workflow: None,
-            repo: None,
-            limit: 200,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Store {
     conn: Arc<Mutex<Connection>>,
@@ -255,86 +236,6 @@ impl Store {
             ],
         )?;
         Ok(())
-    }
-
-    pub fn recent_runs(&self, q: &RunQuery) -> Result<Vec<StoredRun>> {
-        let mut sql = String::from(
-            "SELECT runs.id, runs.repo_full_name, runs.workflow_name, runs.branch, runs.actor,
-                    runs.status, runs.conclusion, runs.commit_sha, runs.commit_subject,
-                    runs.html_url, runs.started_at
-             FROM runs
-             JOIN repos ON repos.full_name = runs.repo_full_name
-             WHERE repos.ignored = 0",
-        );
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if q.failures_only {
-            sql.push_str(" AND conclusion IN ('failure', 'timed_out', 'startup_failure')");
-        }
-        if let Some(w) = &q.workflow {
-            args.push(Box::new(w.clone()));
-            sql.push_str(&format!(" AND workflow_name = ?{}", args.len()));
-        }
-        if let Some(r) = &q.repo {
-            args.push(Box::new(r.clone()));
-            sql.push_str(&format!(" AND repo_full_name = ?{}", args.len()));
-        }
-        args.push(Box::new(q.limit as i64));
-        sql.push_str(&format!(
-            " ORDER BY started_at DESC, id DESC LIMIT ?{}",
-            args.len()
-        ));
-
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&sql)?;
-        let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt
-            .query_map(refs.as_slice(), |row| {
-                Ok(StoredRun {
-                    id: row.get(0)?,
-                    repo_full_name: row.get(1)?,
-                    workflow_name: row.get(2)?,
-                    branch: row.get(3)?,
-                    actor: row.get(4)?,
-                    status: row.get(5)?,
-                    conclusion: row.get(6)?,
-                    commit_sha: row.get(7)?,
-                    commit_subject: row.get(8)?,
-                    html_url: row.get(9)?,
-                    started_at: row.get(10)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    }
-
-    /// The distinct workflow names visible under `q`, ignoring `q.workflow`
-    /// itself — used to populate workflow chips so the chip set reflects the
-    /// other active filters without collapsing to a single chip once one is
-    /// selected.
-    pub fn workflow_names_for_query(&self, q: &RunQuery) -> Result<Vec<String>> {
-        let mut sql = String::from(
-            "SELECT DISTINCT runs.workflow_name
-             FROM runs
-             JOIN repos ON repos.full_name = runs.repo_full_name
-             WHERE repos.ignored = 0",
-        );
-        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-        if q.failures_only {
-            sql.push_str(" AND conclusion IN ('failure', 'timed_out', 'startup_failure')");
-        }
-        if let Some(r) = &q.repo {
-            args.push(Box::new(r.clone()));
-            sql.push_str(&format!(" AND repo_full_name = ?{}", args.len()));
-        }
-        sql.push_str(" ORDER BY runs.workflow_name");
-
-        let conn = self.conn();
-        let mut stmt = conn.prepare(&sql)?;
-        let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
-        let rows = stmt
-            .query_map(refs.as_slice(), |row| row.get::<_, String>(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
     }
 
     /// One row per non-ignored repository that has runs, carrying the latest
