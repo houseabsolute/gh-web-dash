@@ -5,6 +5,7 @@ pub const GITHUB_API: &str = "https://api.github.com";
 const USER_AGENT: &str = "gh-web-dash";
 const RUNS_PER_REPO: usize = 20;
 const REPOS_PER_PAGE: usize = 100;
+const REQUEST_TIMEOUT_SECS: u64 = 30;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GithubError {
@@ -97,7 +98,11 @@ pub struct Client {
 
 impl Client {
     pub fn new(base_url: String, token: String) -> Result<Client> {
-        let http = reqwest::Client::builder().user_agent(USER_AGENT).build()?;
+        // Without a timeout, one hung request stalls the whole poll cycle.
+        let http = reqwest::Client::builder()
+            .user_agent(USER_AGENT)
+            .timeout(std::time::Duration::from_secs(REQUEST_TIMEOUT_SECS))
+            .build()?;
         Ok(Client {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
