@@ -31,8 +31,18 @@ Options:
 
 ## What it shows
 
-A time-ordered feed of workflow runs on each repository's default branch, plus
-runs on branches you authored. Bot-authored runs are excluded. Clicking a row
-opens the run on github.com.
+One row per repository, showing the latest run of each of its workflows. A
+healthy repository collapses to a workflow count; a broken one names the
+workflow that broke. Rows are sorted by most recent activity, and "Failures
+only" filters to repositories that are currently broken.
 
-Data is cached in `~/.config/gh-web-dash/runs.db` and pruned after 30 days.
+Clicking a row expands it to show each workflow's recent run history — newest
+on the left — so you can tell a newly broken workflow from a flaky one. Every
+run links to github.com.
+
+Runs on each repository's default branch, plus runs on branches you authored,
+are included. Bot-authored runs are excluded. Data is cached in
+`~/.config/gh-web-dash/runs.db` and pruned after 30 days.
+
+A full sync over ~100 repositories takes a few minutes; the header shows
+"syncing…" while one is in flight.

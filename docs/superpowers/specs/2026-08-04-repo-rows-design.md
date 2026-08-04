@@ -80,10 +80,12 @@ Two new `Store` methods replace the two being deleted:
   latest run: status, conclusion, branch, commit subject, started-at, and URL.
   One query using `ROW_NUMBER() OVER (PARTITION BY repo_full_name,
   workflow_name ORDER BY started_at DESC)` — not a query per repository.
-- **`workflow_history(repo, workflow, limit)`** — the last N runs of one
-  workflow, newest first. The strip renders in that order directly: leftmost
-  segment is the most recent run, matching the leading status dot beside the
-  repository name.
+- **`repo_history(repo, per_workflow)`** — recent runs for one repository,
+  grouped by workflow, newest first within each group and capped at
+  `per_workflow` each. One query, not one per workflow: the endpoint is
+  per-repository, so a per-workflow method would mean N queries per request.
+  The strip renders in that order directly: leftmost segment is the most recent
+  run, matching the leading status dot beside the repository name.
 
 A repository with no runs in the retained window does not appear. There is
 nothing to say about it, and a hundred rows of "no data" would bury the ninety
@@ -138,7 +140,7 @@ gets wrong:
 - in-progress ranking above success but below failure
 - a repository whose only runs fall outside the retention window
 
-`workflow_history` gets ordering and limit tests. `tests/api.rs` covers
+`repo_history` gets ordering and limit tests. `tests/api.rs` covers
 `/api/repos` shape, sort order, and `failures_only`, plus `/api/history` for a
 repository with two workflows.
 
