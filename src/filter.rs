@@ -33,22 +33,38 @@ mod tests {
 
     #[test]
     fn keeps_default_branch_run_by_user() {
-        assert!(should_keep(&cand("main", "autarch", "User"), "main", "autarch"));
+        assert!(should_keep(
+            &cand("main", "autarch", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn keeps_default_branch_run_by_another_human() {
-        assert!(should_keep(&cand("main", "someone", "User"), "main", "autarch"));
+        assert!(should_keep(
+            &cand("main", "someone", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn keeps_own_branch_run() {
-        assert!(should_keep(&cand("fix-sort", "autarch", "User"), "main", "autarch"));
+        assert!(should_keep(
+            &cand("fix-sort", "autarch", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn drops_other_humans_branch_run() {
-        assert!(!should_keep(&cand("their-fix", "someone", "User"), "main", "autarch"));
+        assert!(!should_keep(
+            &cand("their-fix", "someone", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
@@ -62,28 +78,52 @@ mod tests {
 
     #[test]
     fn drops_bot_run_on_the_default_branch() {
-        assert!(!should_keep(&cand("main", "dependabot[bot]", "Bot"), "main", "autarch"));
+        assert!(!should_keep(
+            &cand("main", "dependabot[bot]", "Bot"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn drops_bot_by_login_suffix_when_type_is_wrong() {
         // Some payloads report type "User" for apps; the login suffix is the backstop.
-        assert!(!should_keep(&cand("main", "renovate[bot]", "User"), "main", "autarch"));
+        assert!(!should_keep(
+            &cand("main", "renovate[bot]", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn actor_type_check_is_case_insensitive() {
-        assert!(!should_keep(&cand("main", "some-app", "bot"), "main", "autarch"));
+        assert!(!should_keep(
+            &cand("main", "some-app", "bot"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn user_comparison_is_case_insensitive() {
-        assert!(should_keep(&cand("fix", "AUTARCH", "User"), "main", "autarch"));
+        assert!(should_keep(
+            &cand("fix", "AUTARCH", "User"),
+            "main",
+            "autarch"
+        ));
     }
 
     #[test]
     fn respects_non_main_default_branch() {
-        assert!(should_keep(&cand("master", "someone", "User"), "master", "autarch"));
-        assert!(!should_keep(&cand("main", "someone", "User"), "master", "autarch"));
+        assert!(should_keep(
+            &cand("master", "someone", "User"),
+            "master",
+            "autarch"
+        ));
+        assert!(!should_keep(
+            &cand("main", "someone", "User"),
+            "master",
+            "autarch"
+        ));
     }
 }
