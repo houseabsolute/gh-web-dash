@@ -2,12 +2,10 @@ use anyhow::{bail, Result};
 
 /// Decide which token to use. Pure — takes what the world reported.
 pub fn choose_token(gh_output: Option<String>, env_token: Option<String>) -> Result<String> {
-    for candidate in [gh_output, env_token] {
-        if let Some(s) = candidate {
-            let trimmed = s.trim();
-            if !trimmed.is_empty() {
-                return Ok(trimmed.to_string());
-            }
+    for s in [gh_output, env_token].into_iter().flatten() {
+        let trimmed = s.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
         }
     }
     bail!(
