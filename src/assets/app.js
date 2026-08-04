@@ -25,14 +25,15 @@ function renderChips(workflows) {
   const chips = document.getElementById("chips");
   const wanted = ["__all__", "__failures__"].concat(workflows);
   // Rebuild only when the set of chips changed, so clicks are not lost mid-poll.
-  if (chips.dataset.keys === wanted.join(" ")) {
+  const key = JSON.stringify(wanted);
+  if (chips.dataset.keys === key) {
     updateChipState();
     return;
   }
-  chips.dataset.keys = wanted.join(" ");
+  chips.dataset.keys = key;
   chips.innerHTML = "";
   chips.appendChild(makeChip("All", () => { failuresOnly = false; workflow = null; }, "all"));
-  chips.appendChild(makeChip("Failures only", () => { failuresOnly = true; }, "failures"));
+  chips.appendChild(makeChip("Failures only", () => { failuresOnly = !failuresOnly; }, "failures"));
   for (const w of workflows) {
     chips.appendChild(makeChip(w, () => { workflow = workflow === w ? null : w; }, "wf:" + w));
   }
