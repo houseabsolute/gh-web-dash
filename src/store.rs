@@ -204,9 +204,12 @@ impl Store {
 
     pub fn recent_runs(&self, q: &RunQuery) -> Result<Vec<StoredRun>> {
         let mut sql = String::from(
-            "SELECT id, repo_full_name, workflow_name, branch, actor, status, conclusion,
-                    commit_sha, commit_subject, html_url, started_at
-             FROM runs WHERE 1 = 1",
+            "SELECT runs.id, runs.repo_full_name, runs.workflow_name, runs.branch, runs.actor,
+                    runs.status, runs.conclusion, runs.commit_sha, runs.commit_subject,
+                    runs.html_url, runs.started_at
+             FROM runs
+             JOIN repos ON repos.full_name = runs.repo_full_name
+             WHERE repos.ignored = 0",
         );
         let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         if q.failures_only {
@@ -251,8 +254,13 @@ impl Store {
 
     pub fn workflow_names(&self) -> Result<Vec<String>> {
         let conn = self.conn();
-        let mut stmt =
-            conn.prepare("SELECT DISTINCT workflow_name FROM runs ORDER BY workflow_name")?;
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT runs.workflow_name
+             FROM runs
+             JOIN repos ON repos.full_name = runs.repo_full_name
+             WHERE repos.ignored = 0
+             ORDER BY runs.workflow_name",
+        )?;
         let rows = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -453,6 +461,30 @@ mod tests {
             .map(|r| r.full_name)
             .collect();
         assert_eq!(names, vec!["autarch/precious".to_string()]);
+    }
+
+    #[test]
+    fn ignored_repos_runs_are_excluded_from_recent_runs_and_workflow_names() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_repo("autarch/precious", "main").unwrap();
+        s.upsert_repo("autarch/noisy", "main").unwrap();
+        s.set_repo_ignored("autarch/noisy", true).unwrap();
+
+        s.upsert_run(&run(
+            1,
+            "autarch/precious",
+            Some("success"),
+            "2026-08-04T09:00:00Z",
+        ))
+        .unwrap();
+        let mut noisy_run = run(2, "autarch/noisy", Some("success"), "2026-08-04T10:00:00Z");
+        noisy_run.workflow_name = "noisy.yml".to_string();
+        s.upsert_run(&noisy_run).unwrap();
+
+        let rows = s.recent_runs(&RunQuery::default()).unwrap();
+        assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1]);
+
+        assert_eq!(s.workflow_names().unwrap(), vec!["test.yml".to_string()]);
     }
 
     #[test]
