@@ -579,3 +579,101 @@ fn summary_carries_the_fields_the_row_displays() {
     assert_eq!(w.html_url, "https://github.com/a/one/actions/runs/7");
     assert_eq!(w.started_at, "2026-08-04T09:00:00Z");
 }
+
+#[test]
+fn history_is_newest_first_per_workflow() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_repo("a/one", "main").unwrap();
+    s.upsert_run(&run_full(
+        1,
+        "a/one",
+        "Run tests",
+        "completed",
+        Some("success"),
+        "2026-08-04T09:00:00Z",
+    ))
+    .unwrap();
+    s.upsert_run(&run_full(
+        2,
+        "a/one",
+        "Run tests",
+        "completed",
+        Some("failure"),
+        "2026-08-04T11:00:00Z",
+    ))
+    .unwrap();
+    s.upsert_run(&run_full(
+        3,
+        "a/one",
+        "Lint",
+        "completed",
+        Some("success"),
+        "2026-08-04T10:00:00Z",
+    ))
+    .unwrap();
+
+    let h = s.repo_history("a/one", 10).unwrap();
+    let names: Vec<_> = h.iter().map(|w| w.workflow_name.clone()).collect();
+    assert_eq!(names, vec!["Lint".to_string(), "Run tests".to_string()]);
+
+    let tests = h.iter().find(|w| w.workflow_name == "Run tests").unwrap();
+    assert_eq!(
+        tests.runs.iter().map(|r| r.id).collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+}
+
+#[test]
+fn history_limit_applies_per_workflow_not_per_repo() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_repo("a/one", "main").unwrap();
+    for i in 1..=5 {
+        s.upsert_run(&run_full(
+            i,
+            "a/one",
+            "W1",
+            "completed",
+            Some("success"),
+            &format!("2026-08-04T0{i}:00:00Z"),
+        ))
+        .unwrap();
+        s.upsert_run(&run_full(
+            i + 100,
+            "a/one",
+            "W2",
+            "completed",
+            Some("success"),
+            &format!("2026-08-04T0{i}:30:00Z"),
+        ))
+        .unwrap();
+    }
+    let h = s.repo_history("a/one", 2).unwrap();
+    assert_eq!(h.len(), 2);
+    for w in &h {
+        assert_eq!(
+            w.runs.len(),
+            2,
+            "workflow {} should be capped at 2",
+            w.workflow_name
+        );
+    }
+}
+
+#[test]
+fn history_of_an_ignored_or_unknown_repo_is_empty() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_repo("a/hidden", "main").unwrap();
+    s.upsert_run(&run_full(
+        1,
+        "a/hidden",
+        "W",
+        "completed",
+        Some("success"),
+        "2026-08-04T09:00:00Z",
+    ))
+    .unwrap();
+    s.set_repo_ignored("a/hidden", true).unwrap();
+
+    assert!(s.repo_history("a/hidden", 10).unwrap().is_empty());
+    assert!(s.repo_history("a/never-seen", 10).unwrap().is_empty());
+}
