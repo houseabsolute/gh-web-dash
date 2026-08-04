@@ -46,7 +46,7 @@ surface something that broke days ago and has since sunk down the list.
 Clicking anywhere on a row toggles it open. Inside, one block per workflow:
 
 - the workflow name
-- a history strip of up to ~10 recent runs, oldest to newest
+- a history strip of up to ~10 recent runs, **newest on the left**
 - a muted line with the latest run's branch, relative time, and commit subject
 
 The strip is what makes history worth showing. A red dot says a workflow is
@@ -81,7 +81,9 @@ Two new `Store` methods replace the two being deleted:
   One query using `ROW_NUMBER() OVER (PARTITION BY repo_full_name,
   workflow_name ORDER BY started_at DESC)` — not a query per repository.
 - **`workflow_history(repo, workflow, limit)`** — the last N runs of one
-  workflow, newest first.
+  workflow, newest first. The strip renders in that order directly: leftmost
+  segment is the most recent run, matching the leading status dot beside the
+  repository name.
 
 A repository with no runs in the retained window does not appear. There is
 nothing to say about it, and a hundred rows of "no data" would bury the ninety
