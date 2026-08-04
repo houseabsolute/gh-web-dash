@@ -85,6 +85,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
 
     state.reset_errors();
     let mut last_rate_limit = None;
+    let mut any_success = false;
 
     for repo in repos {
         let etag = store.repo_etag(&repo.full_name).ok().flatten();
@@ -102,6 +103,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
             }
         };
 
+        any_success = true;
         if resp.rate_limit_remaining.is_some() {
             last_rate_limit = resp.rate_limit_remaining;
         }
@@ -143,7 +145,9 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
         tracing::warn!("prune failed: {e}");
     }
 
-    state.record_success(last_rate_limit);
+    if any_success {
+        state.record_success(last_rate_limit);
+    }
 }
 
 #[cfg(test)]
@@ -204,6 +208,26 @@ mod tests {
             .unwrap();
         assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1]);
         assert_eq!(state.snapshot().error_count, 0);
+    }
+
+    #[tokio::test]
+    async fn all_repos_failing_leaves_last_success_unset() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/gone/actions/runs"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/gone", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        sync_runs(&client, &store, &state, "autarch").await;
+
+        assert_eq!(state.snapshot().last_success, None);
+        assert_eq!(state.snapshot().error_count, 1);
     }
 
     #[tokio::test]
