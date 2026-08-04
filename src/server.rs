@@ -74,7 +74,7 @@ async fn runs(
         tracing::error!("query failed: {e}");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let workflows = state.store.workflow_names().unwrap_or_default();
+    let workflows = state.store.workflow_names_for_query(&q).unwrap_or_default();
     Ok(Json(RunsResponse { runs, workflows }))
 }
 

@@ -109,6 +109,30 @@ async fn workflow_filter_applies() {
 }
 
 #[tokio::test]
+async fn workflow_chips_reflect_failures_only_filter() {
+    let v = get_json("/api/runs?failures_only=true").await;
+    let names: Vec<&str> = v["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["test.yml"]);
+}
+
+#[tokio::test]
+async fn workflow_chips_are_not_collapsed_by_the_workflow_filter() {
+    let v = get_json("/api/runs?workflow=release.yml").await;
+    let names: Vec<&str> = v["workflows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec!["release.yml", "test.yml"]);
+}
+
+#[tokio::test]
 async fn status_reports_sync_state() {
     let v = get_json("/api/status").await;
     assert!(v.get("error_count").is_some());

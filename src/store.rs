@@ -252,17 +252,32 @@ impl Store {
         Ok(rows)
     }
 
-    pub fn workflow_names(&self) -> Result<Vec<String>> {
-        let conn = self.conn();
-        let mut stmt = conn.prepare(
+    /// The distinct workflow names visible under `q`, ignoring `q.workflow`
+    /// itself — used to populate workflow chips so the chip set reflects the
+    /// other active filters without collapsing to a single chip once one is
+    /// selected.
+    pub fn workflow_names_for_query(&self, q: &RunQuery) -> Result<Vec<String>> {
+        let mut sql = String::from(
             "SELECT DISTINCT runs.workflow_name
              FROM runs
              JOIN repos ON repos.full_name = runs.repo_full_name
-             WHERE repos.ignored = 0
-             ORDER BY runs.workflow_name",
-        )?;
+             WHERE repos.ignored = 0",
+        );
+        let mut args: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        if q.failures_only {
+            sql.push_str(" AND conclusion IN ('failure', 'timed_out', 'startup_failure')");
+        }
+        if let Some(r) = &q.repo {
+            args.push(Box::new(r.clone()));
+            sql.push_str(&format!(" AND repo_full_name = ?{}", args.len()));
+        }
+        sql.push_str(" ORDER BY runs.workflow_name");
+
+        let conn = self.conn();
+        let mut stmt = conn.prepare(&sql)?;
+        let refs: Vec<&dyn rusqlite::ToSql> = args.iter().map(|b| b.as_ref()).collect();
         let rows = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
+            .query_map(refs.as_slice(), |row| row.get::<_, String>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(rows)
     }
@@ -484,7 +499,53 @@ mod tests {
         let rows = s.recent_runs(&RunQuery::default()).unwrap();
         assert_eq!(rows.iter().map(|r| r.id).collect::<Vec<_>>(), vec![1]);
 
-        assert_eq!(s.workflow_names().unwrap(), vec!["test.yml".to_string()]);
+        assert_eq!(
+            s.workflow_names_for_query(&RunQuery::default()).unwrap(),
+            vec!["test.yml".to_string()]
+        );
+    }
+
+    #[test]
+    fn workflow_names_for_query_ignores_the_workflow_filter_itself() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_repo("autarch/precious", "main").unwrap();
+        let mut failing = run(
+            1,
+            "autarch/precious",
+            Some("failure"),
+            "2026-08-04T09:00:00Z",
+        );
+        failing.workflow_name = "test.yml".to_string();
+        s.upsert_run(&failing).unwrap();
+        let mut passing = run(
+            2,
+            "autarch/precious",
+            Some("success"),
+            "2026-08-04T10:00:00Z",
+        );
+        passing.workflow_name = "release.yml".to_string();
+        s.upsert_run(&passing).unwrap();
+
+        // failures_only=true, only test.yml has a failing run.
+        let q = RunQuery {
+            failures_only: true,
+            ..RunQuery::default()
+        };
+        assert_eq!(
+            s.workflow_names_for_query(&q).unwrap(),
+            vec!["test.yml".to_string()]
+        );
+
+        // Selecting a workflow must not shrink the chip set to just itself:
+        // the other filters (none here) still admit both workflows.
+        let q2 = RunQuery {
+            workflow: Some("test.yml".to_string()),
+            ..RunQuery::default()
+        };
+        assert_eq!(
+            s.workflow_names_for_query(&q2).unwrap(),
+            vec!["release.yml".to_string(), "test.yml".to_string()]
+        );
     }
 
     #[test]
@@ -507,7 +568,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            s.workflow_names().unwrap(),
+            s.workflow_names_for_query(&RunQuery::default()).unwrap(),
             vec!["release.yml".to_string(), "test.yml".to_string()]
         );
     }
