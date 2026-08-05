@@ -18,6 +18,18 @@ Options:
 - `--no-open` — do not open a browser
 - `--config <path>` — use a different config file
 
+## Development
+
+A devcontainer is included. It builds on `rust:latest` with `mise`, the pinned tool versions from
+`mise.toml`, and the `gh` CLI. Run `gh auth login` once inside the container — the app authenticates
+the same way there as it does on your host.
+
+    mise exec -- precious tidy --all
+    mise exec -- precious lint --all
+
+Inside a container, run the app with `--no-open`: there is no browser to launch, and your editor
+will forward the port it binds.
+
 ## Configuration
 
 `~/.config/gh-web-dash/config.toml`, created with defaults on first run:
@@ -41,7 +53,9 @@ Runs on each repository's default branch, plus runs on branches you authored, ar
 Bot-authored runs are excluded. Data is cached in `~/.config/gh-web-dash/runs.db` and pruned after
 30 days.
 
-The header shows `syncing… 30/44` while a cycle is in flight, counting repositories.
+The header shows `syncing… 30/44` while a cycle is in flight, counting repositories. The tab's
+favicon is green when everything passes and red when any repository is failing, so a break is
+visible without switching to the tab.
 
 ## Which repositories are watched
 

@@ -57,14 +57,39 @@ async function load() {
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const data = await resp.json();
     lastRepos = data.repos;
+    // Correct under either view: unfiltered, look for a failure; filtered to
+    // failures, the list being non-empty IS the failure.
+    setFavicon(
+      lastRepos.some((r) => r.health === "failure") || (failuresOnly && lastRepos.length > 0)
+        ? "bad"
+        : "ok",
+    );
     // Keep open rows live without fetching history for the other ~99.
     await Promise.all([...expanded].map(loadHistory));
     renderRepos(lastRepos);
   } catch (e) {
     // Leave the last-good table on screen; the header shows staleness.
     console.warn("repos fetch failed", e);
+    setFavicon("unknown");
   }
   await loadStatus();
+}
+
+// Deliberately not amber-while-syncing: a cycle runs every few minutes, and an
+// icon that flickers on every one trains you to ignore it. The tab only
+// changes colour when the answer changes.
+const FAVICON_FILL = { ok: "#2da44e", bad: "#cf222e", unknown: "#9198a1" };
+let faviconState = null;
+
+function setFavicon(state) {
+  if (state === faviconState) return;
+  faviconState = state;
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+    '<circle cx="16" cy="16" r="13" fill="' +
+    FAVICON_FILL[state] +
+    '"/></svg>';
+  document.getElementById("favicon").href = "data:image/svg+xml," + encodeURIComponent(svg);
 }
 
 /// Pending fast-poll timer, so a mid-sync tick and the 15s loop cannot stack up.

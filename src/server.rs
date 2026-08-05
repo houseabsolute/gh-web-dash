@@ -22,6 +22,9 @@ const APP_JS: &str = include_str!("assets/app.js");
 const RENDER_JS: &str = include_str!("assets/render.js");
 const REPOS_HTML: &str = include_str!("assets/repos.html");
 const REPOS_JS: &str = include_str!("assets/repos.js");
+/// The neutral fallback. The dashboard replaces it at runtime with one
+/// coloured by whether anything is currently failing.
+const FAVICON_SVG: &str = include_str!("assets/favicon.svg");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -73,6 +76,7 @@ pub fn router(state: AppState) -> Router {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/render.js", get(render_js))
+        .route("/favicon.svg", get(favicon))
         .route("/repos", get(repos_page))
         .route("/repos.js", get(repos_js))
         .route("/api/managed", get(managed))
@@ -98,6 +102,10 @@ async fn app_js() -> impl IntoResponse {
 
 async fn render_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/javascript")], RENDER_JS)
+}
+
+async fn favicon() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "image/svg+xml")], FAVICON_SVG)
 }
 
 async fn repos_page() -> Html<&'static str> {
