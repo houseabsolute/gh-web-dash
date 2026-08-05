@@ -12,7 +12,8 @@
     8420
   ],
   "mounts": [
-    "source=gh-web-dash-gh-auth,target=/home/dev/.config/gh,type=volume"
+    "source=gh-web-dash-gh-auth,target=/home/dev/.config/gh,type=volume",
+    "source=${localEnv:HOME}/.config/gh-web-dash,target=/home/dev/.config/gh-web-dash,type=bind"
   ],
   "appPort": [
     "127.0.0.1:8420:8420"

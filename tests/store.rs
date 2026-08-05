@@ -646,3 +646,39 @@ fn migration_adds_the_column_and_clears_etags_on_an_old_database() {
     drop(s);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_file_backed_store_uses_wal_so_two_processes_can_share_it() {
+    let dir = std::env::temp_dir().join(format!("ghwd-wal-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("runs.db");
+
+    let s = Store::open(&path).unwrap();
+    s.upsert_repo("a/one", "main").unwrap();
+
+    // A second handle, as a second process would have.
+    let other = Store::open(&path).unwrap();
+    other
+        .upsert_run(&run_full(
+            1,
+            "a/one",
+            "W",
+            "completed",
+            Some("success"),
+            "2026-08-04T09:00:00Z",
+        ))
+        .unwrap();
+    assert_eq!(s.repo_summaries(false).unwrap().len(), 1);
+
+    // WAL leaves its sidecar next to the database; its absence would mean the
+    // pragma silently did not take.
+    assert!(
+        path.with_extension("db-wal").exists(),
+        "expected a -wal file beside {}",
+        path.display()
+    );
+
+    drop(s);
+    drop(other);
+    let _ = std::fs::remove_dir_all(&dir);
+}

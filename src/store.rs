@@ -159,6 +159,15 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store> {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        // The database can be shared — a devcontainer bind-mounts the host's
+        // copy, so a poller may be running on each side. WAL lets a reader and
+        // a writer coexist instead of locking each other out, and the timeout
+        // makes a contended write wait rather than fail immediately.
+        //
+        // journal_mode returns a row, so it cannot go through execute_batch.
+        // In-memory databases report "memory" here and are unaffected.
+        let _: String = conn.query_row("PRAGMA journal_mode = WAL", [], |row| row.get(0))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch(SCHEMA)
             .context("failed to create schema")?;
         Store::migrate(&conn).context("failed to migrate schema")?;

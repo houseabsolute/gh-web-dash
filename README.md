@@ -32,6 +32,11 @@ That runs `gh auth login` inside the container. The credentials live in a named 
 survive `just rebuild` — but a fresh clone needs it once, and `just run` will fail with "No GitHub
 token found" until you do.
 
+Your `~/.config/gh-web-dash` is bind-mounted into the container, so the container uses the same
+config and the same database as your host — your ignore globs apply, and there is no cold re-sync.
+The database is opened in WAL mode so a poller on each side does not lock the other out, but note
+that anything you mute or force-include from a container run lands in your real dashboard.
+
 There is a `Justfile` wrapping the common tasks, each running inside the container:
 
     just auth          # gh auth login, inside the container
