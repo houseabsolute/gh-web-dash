@@ -21,6 +21,11 @@ struct Args {
     /// Path to the config file.
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Bind this port instead of letting the OS pick a free one. Useful when
+    /// the port has to be predictable — forwarded out of a container, or
+    /// bookmarked.
+    #[arg(long)]
+    port: Option<u16>,
 }
 
 #[tokio::main]
@@ -95,9 +100,15 @@ async fn main() -> Result<()> {
         config: std::sync::Arc::new(cfg),
         trigger: trigger_tx,
     };
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    // Port 0 asks the OS for any free port, which is the default precisely so
+    // there is no "address already in use" failure to think about.
+    let requested = args.port.unwrap_or(0);
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", requested))
         .await
-        .context("could not bind a local port")?;
+        .with_context(|| match args.port {
+            Some(p) => format!("could not bind port {p} — is something already using it?"),
+            None => "could not bind a local port".to_string(),
+        })?;
     let port = listener.local_addr()?.port();
     let url = format!("http://127.0.0.1:{port}");
     println!("gh-web-dash listening on {url}");

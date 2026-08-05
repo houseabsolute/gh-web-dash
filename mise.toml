@@ -1,4 +1,10 @@
 [tools]
+just = "1.57.0"
+# oxfmt is an npm package, so it needs a node runtime. Without this the
+# container has no node and oxfmt dies with exit 127 — GitHub runners happen to
+# ship node, so CI does not notice.
+node = "26.5.1"
+"npm:@devcontainers/cli" = "0.88.0"
 "npm:oxfmt" = "0.61.0"
 typos = "1.48.0"
 "github:houseabsolute/omegasort" = "0.1.3"

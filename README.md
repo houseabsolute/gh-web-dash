@@ -17,6 +17,7 @@ Options:
 
 - `--no-open` — do not open a browser
 - `--config <path>` — use a different config file
+- `--port <port>` — bind a specific port instead of an OS-assigned one
 
 ## Development
 
@@ -24,11 +25,24 @@ A devcontainer is included. It builds on `rust:latest` with `mise`, the pinned t
 `mise.toml`, and the `gh` CLI. Run `gh auth login` once inside the container — the app authenticates
 the same way there as it does on your host.
 
+There is a `Justfile` wrapping the common tasks, each running inside the container:
+
+    just test          # cargo test
+    just lint --all    # precious lint
+    just tidy --all    # precious tidy
+    just run           # the dashboard, on port 8420
+    just shell         # a shell in the container
+    just ci            # everything CI checks
+    just rebuild       # recreate the container
+
+Or directly, without a container:
+
     mise exec -- precious tidy --all
     mise exec -- precious lint --all
 
-Inside a container, run the app with `--no-open`: there is no browser to launch, and your editor
-will forward the port it binds.
+Inside a container, run the app with `--no-open`: there is no browser to launch. `just run` also
+passes `--port 8420`, which `devcontainer.json` forwards — the OS-assigned default would differ
+every time and be awkward to forward.
 
 ## Configuration
 
