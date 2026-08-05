@@ -20,6 +20,10 @@ _up:
 rebuild:
     devcontainer up --workspace-folder . {{ _git_mount }} --remove-existing-container
 
+# Log in to GitHub inside the container (persists across `just rebuild`)
+auth: _up
+    {{ _dce }} gh auth login
+
 shell: _up
     {{ _dce }} bash -i
 

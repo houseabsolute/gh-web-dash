@@ -10,5 +10,8 @@
   "postCreateCommand": ".devcontainer/post-create.sh",
   "forwardPorts": [
     8420
+  ],
+  "mounts": [
+    "source=gh-web-dash-gh-auth,target=/home/dev/.config/gh,type=volume"
   ]
 }

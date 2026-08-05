@@ -22,11 +22,18 @@ Options:
 ## Development
 
 A devcontainer is included. It builds on `rust:latest` with `mise`, the pinned tool versions from
-`mise.toml`, and the `gh` CLI. Run `gh auth login` once inside the container — the app authenticates
-the same way there as it does on your host.
+`mise.toml`, and the `gh` CLI. The app needs a GitHub token there just as it does on your host, so
+log in once:
+
+    just auth
+
+That runs `gh auth login` inside the container. The credentials live in a named volume, so they
+survive `just rebuild` — but a fresh clone needs it once, and `just run` will fail with "No GitHub
+token found" until you do.
 
 There is a `Justfile` wrapping the common tasks, each running inside the container:
 
+    just auth          # gh auth login, inside the container
     just test          # cargo test
     just lint --all    # precious lint
     just tidy --all    # precious tidy

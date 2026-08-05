@@ -30,4 +30,10 @@ RUN useradd -m -s /bin/bash dev \
 
 USER dev
 
+# Created here, as dev, so the named volume mounted over it in
+# devcontainer.json inherits this ownership. Docker seeds a fresh named volume
+# from the image's contents at that path; if the directory did not exist, the
+# volume would be root-owned and gh could not write to it.
+RUN mkdir -p /home/dev/.config/gh
+
 RUN echo 'eval "$(mise activate bash)"' >> /home/dev/.bashrc
