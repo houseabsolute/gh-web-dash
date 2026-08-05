@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>gh-web-dash — repositories</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <h1><a href="/" class="home">gh-web-dash</a> / repositories</h1>
+      <input id="search" class="search" type="search" placeholder="Filter by name…" />
+      <div id="counts" class="chips"></div>
+      <div class="spacer"></div>
+      <span id="summary" class="status"></span>
+    </header>
+    <table>
+      <tbody id="rows"></tbody>
+    </table>
+    <p id="empty" class="empty hidden">Nothing matches.</p>
+    <script src="/repos.js"></script>
+  </body>
+</html>

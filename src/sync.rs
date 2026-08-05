@@ -7,6 +7,7 @@ use serde::Serialize;
 use crate::config::Config;
 use crate::filter::{should_keep, RunCandidate};
 use crate::github::Client;
+use crate::inclusion::{decide, Decision, Override, RepoFacts, SkipReason};
 use crate::store::{Store, StoredRun};
 
 /// Below this many remaining API calls, back off.
@@ -99,21 +100,47 @@ pub fn effective_interval(base_secs: u64, remaining: Option<i64>) -> u64 {
     }
 }
 
+/// Re-evaluate one repository's inclusion and store the result. Used by
+/// discovery, and by the UI so a toggle takes effect now rather than within
+/// the hour.
+pub fn apply_decision(store: &Store, cfg: &Config, full_name: &str) -> Result<Decision> {
+    let matcher = cfg.ignore_matcher()?;
+    let facts = store
+        .repo_facts(full_name)?
+        .ok_or_else(|| anyhow::anyhow!("unknown repository: {full_name}"))?;
+    let decision = decide(
+        &RepoFacts {
+            user_override: facts.user_override.as_deref().and_then(Override::parse),
+            glob_ignored: matcher.is_ignored(full_name),
+            archived: facts.archived,
+            pushed_at: facts.pushed_at.as_deref(),
+            has_runs: facts.has_runs,
+        },
+        Utc::now(),
+    );
+    store.set_repo_decision(
+        full_name,
+        decision.is_included(),
+        decision.skip_reason().map(|r| r.as_str()),
+    )?;
+    Ok(decision)
+}
+
 /// Fetch the repository list and record it, marking ignored ones.
 pub async fn discover_repos(client: &Client, store: &Store, cfg: &Config) -> Result<()> {
-    let matcher = cfg.ignore_matcher()?;
     let repos = client.list_repos(cfg.include_orgs).await?;
     let seen: std::collections::HashSet<String> =
         repos.iter().map(|r| r.full_name.clone()).collect();
     for r in &repos {
         store.upsert_repo(&r.full_name, &r.default_branch)?;
-        store.set_repo_ignored(&r.full_name, matcher.is_ignored(&r.full_name))?;
+        store.set_repo_facts(&r.full_name, r.archived, r.pushed_at.as_deref())?;
+        apply_decision(store, cfg, &r.full_name)?;
     }
     // A repository that is no longer returned by discovery has been deleted,
     // renamed, or the token has lost access — either way, stop polling it.
     for name in store.all_repo_names()? {
         if !seen.contains(&name) {
-            store.set_repo_ignored(&name, true)?;
+            store.set_repo_decision(&name, false, Some(SkipReason::Gone.as_str()))?;
         }
     }
     Ok(())

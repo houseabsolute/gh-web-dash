@@ -51,6 +51,27 @@ pub struct StoredRun {
     pub workflow_path: Option<String>,
 }
 
+/// One row of the repository management page.
+#[derive(Debug, Clone, Serialize)]
+pub struct ManagedRepo {
+    pub full_name: String,
+    pub included: bool,
+    pub skip_reason: Option<String>,
+    pub user_override: Option<String>,
+    pub archived: bool,
+    pub pushed_at: Option<String>,
+    pub run_count: usize,
+}
+
+/// The stored half of what the inclusion rules need.
+#[derive(Debug, Clone)]
+pub struct RepoFactsRow {
+    pub user_override: Option<String>,
+    pub archived: bool,
+    pub pushed_at: Option<String>,
+    pub has_runs: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct StoredRepo {
     pub full_name: String,
@@ -162,6 +183,21 @@ impl Store {
                 .context("failed to drop the obsolete runs.workflow_id")?;
         }
 
+        for (col, decl) in [
+            ("user_override", "TEXT"),
+            ("archived", "INTEGER NOT NULL DEFAULT 0"),
+            ("pushed_at", "TEXT"),
+            ("skip_reason", "TEXT"),
+        ] {
+            let present = conn
+                .prepare("SELECT 1 FROM pragma_table_info('repos') WHERE name = ?1")?
+                .exists([col])?;
+            if !present {
+                conn.execute_batch(&format!("ALTER TABLE repos ADD COLUMN {col} {decl};"))
+                    .with_context(|| format!("failed to add repos.{col}"))?;
+            }
+        }
+
         if !has_column("workflow_path")? {
             // Clearing the ETags in the same step is what backfills the new
             // column: every repository looks changed on the next cycle, so its
@@ -194,6 +230,96 @@ impl Store {
             params![full_name, default_branch],
         )?;
         Ok(())
+    }
+
+    /// Record what GitHub says about a repository, used by the inclusion rules.
+    pub fn set_repo_facts(
+        &self,
+        full_name: &str,
+        archived: bool,
+        pushed_at: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE repos SET archived = ?2, pushed_at = ?3 WHERE full_name = ?1",
+            params![full_name, archived as i64, pushed_at],
+        )?;
+        Ok(())
+    }
+
+    /// Apply an inclusion decision: the effective flag plus the reason the UI
+    /// shows. Kept together so the two can never disagree.
+    pub fn set_repo_decision(
+        &self,
+        full_name: &str,
+        included: bool,
+        skip_reason: Option<&str>,
+    ) -> Result<()> {
+        let conn = self.conn();
+        conn.execute(
+            "UPDATE repos SET ignored = ?2, skip_reason = ?3 WHERE full_name = ?1",
+            params![full_name, (!included) as i64, skip_reason],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_repo_override(&self, full_name: &str, value: Option<&str>) -> Result<()> {
+        let conn = self.conn();
+        let n = conn.execute(
+            "UPDATE repos SET user_override = ?2 WHERE full_name = ?1",
+            params![full_name, value],
+        )?;
+        if n == 0 {
+            anyhow::bail!("unknown repository: {full_name}");
+        }
+        Ok(())
+    }
+
+    /// Every repository with the state the management page displays.
+    pub fn managed_repos(&self) -> Result<Vec<ManagedRepo>> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(
+            "SELECT r.full_name, r.ignored, r.skip_reason, r.user_override, r.archived,
+                    r.pushed_at, (SELECT count(*) FROM runs u WHERE u.repo_full_name = r.full_name)
+             FROM repos r
+             ORDER BY r.full_name",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ManagedRepo {
+                    full_name: row.get(0)?,
+                    included: row.get::<_, i64>(1)? == 0,
+                    skip_reason: row.get(2)?,
+                    user_override: row.get(3)?,
+                    archived: row.get::<_, i64>(4)? != 0,
+                    pushed_at: row.get(5)?,
+                    run_count: row.get::<_, i64>(6)? as usize,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
+    }
+
+    /// The facts the inclusion rules need for one repository.
+    pub fn repo_facts(&self, full_name: &str) -> Result<Option<RepoFactsRow>> {
+        let conn = self.conn();
+        let row = conn
+            .query_row(
+                "SELECT r.user_override, r.archived, r.pushed_at,
+                        (SELECT count(*) FROM runs u WHERE u.repo_full_name = r.full_name)
+                 FROM repos r WHERE r.full_name = ?1",
+                params![full_name],
+                |row| {
+                    Ok(RepoFactsRow {
+                        user_override: row.get(0)?,
+                        archived: row.get::<_, i64>(1)? != 0,
+                        pushed_at: row.get(2)?,
+                        has_runs: row.get::<_, i64>(3)? > 0,
+                    })
+                },
+            )
+            .optional()?;
+        Ok(row)
     }
 
     pub fn set_repo_ignored(&self, full_name: &str, ignored: bool) -> Result<()> {

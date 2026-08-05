@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::extract::{Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse};
@@ -6,8 +8,10 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::Sender;
 
-use crate::store::{RepoSummary, Store, WorkflowHistory};
-use crate::sync::{SyncState, SyncStatus};
+use crate::config::Config;
+use crate::inclusion::Override;
+use crate::store::{ManagedRepo, RepoSummary, Store, WorkflowHistory};
+use crate::sync::{apply_decision, SyncState, SyncStatus};
 
 /// Runs per workflow in an expansion's history strip.
 const HISTORY_PER_WORKFLOW: usize = 10;
@@ -16,11 +20,16 @@ const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
 const RENDER_JS: &str = include_str!("assets/render.js");
+const REPOS_HTML: &str = include_str!("assets/repos.html");
+const REPOS_JS: &str = include_str!("assets/repos.js");
 
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
     pub sync: SyncState,
+    /// Needed to re-evaluate inclusion when the UI changes an override, so a
+    /// toggle takes effect now rather than at the next hourly discovery.
+    pub config: Arc<Config>,
     /// Sending on this asks the poll loop to run a cycle immediately.
     pub trigger: Sender<()>,
 }
@@ -41,6 +50,18 @@ pub struct ReposResponse {
     pub repos: Vec<RepoSummary>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OverrideBody {
+    pub repo: String,
+    /// `"include"`, `"exclude"`, or null to fall back to the automatic rules.
+    pub value: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ManagedResponse {
+    pub repos: Vec<ManagedRepo>,
+}
+
 #[derive(Serialize)]
 pub struct HistoryResponse {
     pub workflows: Vec<WorkflowHistory>,
@@ -52,6 +73,10 @@ pub fn router(state: AppState) -> Router {
         .route("/app.css", get(app_css))
         .route("/app.js", get(app_js))
         .route("/render.js", get(render_js))
+        .route("/repos", get(repos_page))
+        .route("/repos.js", get(repos_js))
+        .route("/api/managed", get(managed))
+        .route("/api/override", post(set_override))
         .route("/api/repos", get(repos))
         .route("/api/history", get(history))
         .route("/api/status", get(status))
@@ -73,6 +98,56 @@ async fn app_js() -> impl IntoResponse {
 
 async fn render_js() -> impl IntoResponse {
     ([(header::CONTENT_TYPE, "text/javascript")], RENDER_JS)
+}
+
+async fn repos_page() -> Html<&'static str> {
+    Html(REPOS_HTML)
+}
+
+async fn repos_js() -> impl IntoResponse {
+    ([(header::CONTENT_TYPE, "text/javascript")], REPOS_JS)
+}
+
+/// Every repository and why it is or is not polled.
+async fn managed(State(state): State<AppState>) -> Result<Json<ManagedResponse>, StatusCode> {
+    let repos = state.store.managed_repos().map_err(|e| {
+        tracing::error!("managed repo query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(ManagedResponse { repos }))
+}
+
+/// Record a manual include/exclude and re-evaluate that repository at once.
+async fn set_override(
+    State(state): State<AppState>,
+    Json(body): Json<OverrideBody>,
+) -> Result<Json<ManagedResponse>, StatusCode> {
+    // Reject unknown values rather than storing something the rules ignore.
+    let value = match body.value.as_deref() {
+        None | Some("") => None,
+        Some(v) => match Override::parse(v) {
+            Some(o) => Some(o),
+            None => return Err(StatusCode::BAD_REQUEST),
+        },
+    };
+
+    state
+        .store
+        .set_repo_override(&body.repo, value.map(|o| o.as_str()))
+        .map_err(|e| {
+            tracing::warn!("override rejected: {e}");
+            StatusCode::NOT_FOUND
+        })?;
+    apply_decision(&state.store, &state.config, &body.repo).map_err(|e| {
+        tracing::error!("could not re-evaluate {}: {e}", body.repo);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+
+    let repos = state.store.managed_repos().map_err(|e| {
+        tracing::error!("managed repo query failed: {e}");
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    Ok(Json(ManagedResponse { repos }))
 }
 
 async fn repos(

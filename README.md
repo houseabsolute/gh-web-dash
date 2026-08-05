@@ -44,7 +44,22 @@ Runs on each repository's default branch, plus runs on branches you authored,
 are included. Bot-authored runs are excluded. Data is cached in
 `~/.config/gh-web-dash/runs.db` and pruned after 30 days.
 
-A full sync takes a few minutes — the header shows `syncing… 240/490` while
-one is in flight, counting repositories. With `include_orgs = true` that count
-covers every organization you belong to, not just your own repositories; set it
-to `false`, or use `ignore`, to trim it.
+The header shows `syncing… 30/44` while a cycle is in flight, counting
+repositories.
+
+## Which repositories are watched
+
+Not every repository is polled. A repository is skipped when it matches an
+`ignore` glob, is archived on GitHub, or has had no pushes in 90 days and no
+runs on record. That last rule keeps a repository with only scheduled workflows
+visible once it has produced a run.
+
+The **repos** link in the header opens a page listing every repository you can
+see, each labelled with why it is or is not being polled, with a search box and
+per-category counts. From there you can **mute** a repository that is being
+polled, or **include anyway** one that the rules skip — useful for a dormant
+repository whose only workflow is scheduled, which no `ignore` glob could
+rescue, since globs only subtract.
+
+Those manual choices are stored in the database, not in `config.toml` — the app
+never rewrites your config file.

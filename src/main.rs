@@ -93,6 +93,7 @@ async fn main() -> Result<()> {
     let state = AppState {
         store,
         sync: sync_state,
+        config: std::sync::Arc::new(cfg),
         trigger: trigger_tx,
     };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")

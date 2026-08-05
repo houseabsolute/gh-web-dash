@@ -128,3 +128,16 @@ a.wfname {
   text-underline-offset: 3px;
 }
 a.wfname:hover { text-decoration-color: var(--fg); }
+a.home { color: inherit; text-decoration: none; }
+a.home:hover { text-decoration: underline; }
+.search {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  padding: 3px 8px;
+  font-size: 12px;
+  min-width: 220px;
+}
+td.override { text-align: right; white-space: nowrap; }
+td.override .chip { cursor: pointer; }

@@ -28,6 +28,10 @@ impl GithubError {
 pub struct Repo {
     pub full_name: String,
     pub default_branch: String,
+    /// Archived repositories cannot run workflows, so they are never polled.
+    #[serde(default)]
+    pub archived: bool,
+    pub pushed_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
