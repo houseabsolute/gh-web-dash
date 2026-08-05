@@ -223,6 +223,9 @@ async fn status_reports_sync_state() {
     let v = get_json("/api/status").await;
     assert!(v.get("error_count").is_some());
     assert!(v.get("last_success").is_some());
+    // Present but null when no cycle is running — the page keys off this.
+    assert!(v.get("progress").is_some());
+    assert!(v["progress"].is_null());
 }
 
 #[tokio::test]

@@ -10,9 +10,6 @@ const expanded = new Set();
 /// full_name -> [{workflow_name, runs}]
 const history = new Map();
 let lastRepos = [];
-/// When "Refresh now" was last pressed, so the header can show that the
-/// resulting cycle is still running. Null when no manual sync is outstanding.
-let syncRequestedAt = null;
 
 function updateChipState() {
   for (const b of document.querySelectorAll(".chip")) {
@@ -70,6 +67,9 @@ async function load() {
   await loadStatus();
 }
 
+/// Pending fast-poll timer, so a mid-sync tick and the 15s loop cannot stack up.
+let statusTimer = null;
+
 async function loadStatus() {
   const el = document.getElementById("staleness");
   const rl = document.getElementById("ratelimit");
@@ -78,15 +78,17 @@ async function loadStatus() {
     const resp = await fetch("/api/status");
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     const s = await resp.json();
-    // A cycle over ~100 repositories takes minutes, so a manual sync shows
-    // nothing for a long time unless we say it is running. Hold "syncing…"
-    // until a cycle finishes that started after the button was pressed.
-    const syncPending =
-      syncRequestedAt !== null &&
-      (!s.last_success || new Date(s.last_success).getTime() < syncRequestedAt);
-    if (!syncPending) syncRequestedAt = null;
-
-    if (syncPending || !s.last_success) {
+    // A cycle over ~100 repositories takes minutes. The server reports how far
+    // along it is, so the header can show real progress rather than going
+    // quiet — and this covers scheduled cycles, not just the refresh button.
+    if (s.progress) {
+      el.textContent = "syncing… " + s.progress.done + "/" + s.progress.total;
+      el.classList.remove("stale");
+      // Tick faster than the 15s poll while a cycle runs, so the count moves
+      // visibly. This reads local SQLite only — it never touches GitHub.
+      clearTimeout(statusTimer);
+      statusTimer = setTimeout(loadStatus, 2000);
+    } else if (!s.last_success) {
       el.textContent = "syncing…";
       el.classList.remove("stale");
     } else {
@@ -115,9 +117,10 @@ async function loadStatus() {
 }
 
 document.getElementById("refresh").addEventListener("click", async () => {
-  syncRequestedAt = Date.now();
   document.getElementById("staleness").textContent = "syncing…";
   await fetch("/api/sync", { method: "POST" });
+  // The next status poll picks up real progress from the server.
+  setTimeout(loadStatus, 500);
 });
 
 load();

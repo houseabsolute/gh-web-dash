@@ -18,6 +18,10 @@ pub const DISCOVERY_INTERVAL_SECS: u64 = 3600;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct SyncStatus {
+    /// Set while a cycle is running, `None` when idle. The page shows this
+    /// instead of guessing from when the refresh button was pressed, so the
+    /// indicator also covers scheduled cycles and cannot get stuck.
+    pub progress: Option<SyncProgress>,
     pub last_success: Option<String>,
     pub error_count: usize,
     pub rate_limit_remaining: Option<i64>,
@@ -26,6 +30,14 @@ pub struct SyncStatus {
     /// (after any low-rate-limit backoff). The UI derives its staleness
     /// threshold from this so backoff itself doesn't trip the alarm.
     pub poll_interval_secs: Option<u64>,
+}
+
+/// How far through a cycle the poller is, counted in repositories: a 304 is
+/// as much progress as a full fetch, so the count moves steadily.
+#[derive(Debug, Clone, Copy, Default, Serialize)]
+pub struct SyncProgress {
+    pub done: usize,
+    pub total: usize,
 }
 
 /// Shared, cheaply cloneable sync status for the header.
@@ -55,6 +67,20 @@ impl SyncState {
 
     fn reset_errors(&self) {
         self.inner.lock().unwrap().error_count = 0;
+    }
+
+    fn begin_cycle(&self, total: usize) {
+        self.inner.lock().unwrap().progress = Some(SyncProgress { done: 0, total });
+    }
+
+    fn advance_cycle(&self) {
+        if let Some(p) = self.inner.lock().unwrap().progress.as_mut() {
+            p.done += 1;
+        }
+    }
+
+    fn end_cycle(&self) {
+        self.inner.lock().unwrap().progress = None;
     }
 
     /// Record the poll interval that will govern the next cycle's wait, so
@@ -104,6 +130,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
     };
 
     state.reset_errors();
+    state.begin_cycle(repos.len());
     let mut last_rate_limit = None;
     let mut any_success = false;
 
@@ -119,6 +146,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
                 };
                 tracing::warn!("{msg}");
                 state.record_error(msg);
+                state.advance_cycle();
                 continue;
             }
         };
@@ -159,6 +187,8 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
                 state.record_error(format!("failed to store run {}: {e}", run.id));
             }
         }
+
+        state.advance_cycle();
     }
 
     let cutoff = (Utc::now() - Duration::days(RETENTION_DAYS)).to_rfc3339();
@@ -169,6 +199,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
     if any_success {
         state.record_success(last_rate_limit);
     }
+    state.end_cycle();
 }
 
 #[cfg(test)]
@@ -209,6 +240,89 @@ mod tests {
                 "head_commit": {"message": "Do a thing"}
             }]
         })
+    }
+
+    #[tokio::test]
+    async fn progress_is_cleared_when_a_cycle_ends() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/a/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(runs_body(1, "main", "autarch", "User")),
+            )
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/a", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        assert!(state.snapshot().progress.is_none(), "idle before the cycle");
+        sync_runs(&client, &store, &state, "autarch").await;
+        assert!(
+            state.snapshot().progress.is_none(),
+            "idle again after the cycle"
+        );
+    }
+
+    #[tokio::test]
+    async fn progress_counts_every_repo_including_failures() {
+        let server = MockServer::start().await;
+        // Delayed so the cycle lasts long enough to observe mid-flight;
+        // without this the whole sync finishes inside one sampling tick.
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/ok/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(runs_body(1, "main", "autarch", "User"))
+                    .set_delay(std::time::Duration::from_millis(60)),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/repos/autarch/gone/actions/runs"))
+            .respond_with(
+                ResponseTemplate::new(404).set_delay(std::time::Duration::from_millis(60)),
+            )
+            .mount(&server)
+            .await;
+
+        let store = crate::store::Store::open_in_memory().unwrap();
+        store.upsert_repo("autarch/ok", "main").unwrap();
+        store.upsert_repo("autarch/gone", "main").unwrap();
+        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let state = SyncState::default();
+
+        // Observe progress from another task while the cycle runs.
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        {
+            let state = state.clone();
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                for _ in 0..200 {
+                    if let Some(p) = state.snapshot().progress {
+                        seen.lock().unwrap().push((p.done, p.total));
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                }
+            });
+        }
+
+        sync_runs(&client, &store, &state, "autarch").await;
+
+        let seen = seen.lock().unwrap().clone();
+        assert!(!seen.is_empty(), "progress should be visible mid-cycle");
+        assert!(
+            seen.iter().all(|(_, total)| *total == 2),
+            "total is the repo count: {seen:?}"
+        );
+        // The failing repo still advances the counter — otherwise the number
+        // would stall and look wedged.
+        assert!(
+            seen.iter().any(|(done, _)| *done > 0),
+            "counter advances: {seen:?}"
+        );
     }
 
     #[tokio::test]

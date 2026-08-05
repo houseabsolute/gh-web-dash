@@ -44,5 +44,7 @@ Runs on each repository's default branch, plus runs on branches you authored,
 are included. Bot-authored runs are excluded. Data is cached in
 `~/.config/gh-web-dash/runs.db` and pruned after 30 days.
 
-A full sync over ~100 repositories takes a few minutes; the header shows
-"syncing…" while one is in flight.
+A full sync takes a few minutes — the header shows `syncing… 240/490` while
+one is in flight, counting repositories. With `include_orgs = true` that count
+covers every organization you belong to, not just your own repositories; set it
+to `false`, or use `ignore`, to trim it.
