@@ -2,6 +2,9 @@
 name = "gh-web-dash"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "A local web dashboard of recent GitHub Actions runs across all your repositories"
+repository = "https://github.com/houseabsolute/gh-web-dash"
 
 [dependencies]
 anyhow = "1"

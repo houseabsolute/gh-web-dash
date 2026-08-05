@@ -63,3 +63,12 @@ rescue, since globs only subtract.
 
 Those manual choices are stored in the database, not in `config.toml` — the app
 never rewrites your config file.
+
+## License
+
+Dual-licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option.
