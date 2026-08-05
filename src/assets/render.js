@@ -48,6 +48,23 @@ function renderRepos(repos) {
   document.getElementById("empty").classList.toggle("hidden", repos.length > 0);
 }
 
+// A "view" pill linking out to github.com. Clicks must not also toggle the row.
+function viewPill(href, label) {
+  const a = document.createElement("a");
+  a.className = "view";
+  a.href = href;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = "view";
+  a.title = label;
+  a.addEventListener("click", (e) => e.stopPropagation());
+  return a;
+}
+
+function workflowUrl(repoFullName, workflowId) {
+  return "https://github.com/" + repoFullName + "/actions/workflows/" + workflowId;
+}
+
 function repoRow(repo) {
   const tr = document.createElement("tr");
   tr.className = "repo-row";
@@ -59,14 +76,18 @@ function repoRow(repo) {
   st.appendChild(dot(repo.health));
   tr.appendChild(st);
 
-  tr.appendChild(cell(repo.full_name, "repo"));
-  tr.appendChild(workflowCell(repo.workflows));
+  const nameCell = cell(repo.full_name, "repo");
+  nameCell.appendChild(
+    viewPill("https://github.com/" + repo.full_name, "Open " + repo.full_name + " on GitHub")
+  );
+  tr.appendChild(nameCell);
+  tr.appendChild(workflowCell(repo.full_name, repo.workflows));
   tr.appendChild(cell(relTime(repo.started_at), "time"));
   return tr;
 }
 
 // Name what is broken; count what is not.
-function workflowCell(workflows) {
+function workflowCell(repoFullName, workflows) {
   const td = cell(null, null);
   let okCount = 0;
   for (const wf of workflows) {
@@ -79,6 +100,12 @@ function workflowCell(workflows) {
     pill.appendChild(dot(wf.health));
     pill.appendChild(document.createTextNode(wf.workflow_name));
     td.appendChild(pill);
+    // Only linkable once the run has been refetched with its workflow ID.
+    if (wf.workflow_id) {
+      td.appendChild(
+        viewPill(workflowUrl(repoFullName, wf.workflow_id), "Open " + wf.workflow_name + " on GitHub")
+      );
+    }
   }
   const note = document.createElement("span");
   note.className = "muted mono";
@@ -123,6 +150,16 @@ function workflowBlock(wf) {
   name.className = "wfname";
   name.textContent = wf.workflow_name;
   div.appendChild(name);
+
+  const latestRun = wf.runs[0];
+  if (latestRun && latestRun.workflow_id) {
+    div.appendChild(
+      viewPill(
+        workflowUrl(latestRun.repo_full_name, latestRun.workflow_id),
+        "Open " + wf.workflow_name + " on GitHub"
+      )
+    );
+  }
 
   // Newest on the left, matching the repo's leading status dot.
   const strip = document.createElement("span");

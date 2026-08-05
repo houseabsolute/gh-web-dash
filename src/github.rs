@@ -45,6 +45,10 @@ pub struct Commit {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Run {
     pub id: i64,
+    /// GitHub's ID for the workflow this run belongs to. Used to link to the
+    /// workflow's own page.
+    #[serde(default)]
+    pub workflow_id: Option<i64>,
     #[serde(rename = "name", default)]
     pub workflow_name: String,
     #[serde(default)]
@@ -371,6 +375,7 @@ mod tests {
     fn commit_subject_handles_missing_commit() {
         let r = Run {
             id: 1,
+            workflow_id: None,
             workflow_name: "test.yml".into(),
             head_branch: "main".into(),
             status: "completed".into(),

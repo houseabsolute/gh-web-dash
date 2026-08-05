@@ -105,3 +105,17 @@ td.exp { padding: 2px 12px 10px 34px; white-space: normal; }
 .seg.neutral { background: var(--muted); }
 a.sub { display: block; font-size: 12px; opacity: 0.75; padding-top: 3px; }
 .loading { font-size: 12px; opacity: 0.6; padding: 4px 0; }
+a.view {
+  display: inline-block;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 0 8px;
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 16px;
+  color: var(--muted);
+  text-decoration: none;
+  vertical-align: middle;
+}
+a.view:hover { color: var(--fg); border-color: var(--muted); }
+.wf + a.view { margin-right: 6px; }

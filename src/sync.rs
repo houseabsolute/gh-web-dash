@@ -152,6 +152,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
                 commit_subject: run.commit_subject(),
                 html_url: run.html_url.clone(),
                 started_at: run.started_at(),
+                workflow_id: run.workflow_id,
             };
             if let Err(e) = store.upsert_run(&stored) {
                 tracing::warn!("failed to store run {}: {e}", run.id);

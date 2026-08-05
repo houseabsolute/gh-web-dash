@@ -21,6 +21,7 @@ fn run_full(
         commit_subject: "Do a thing".to_string(),
         html_url: format!("https://github.com/{repo}/actions/runs/{id}"),
         started_at: started.to_string(),
+        workflow_id: Some(4242),
     }
 }
 
@@ -519,4 +520,129 @@ fn history_of_an_ignored_or_unknown_repo_is_empty() {
 
     assert!(s.repo_history("a/hidden", 10).unwrap().is_empty());
     assert!(s.repo_history("a/never-seen", 10).unwrap().is_empty());
+}
+
+#[test]
+fn workflow_id_round_trips_and_reaches_summaries_and_history() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_repo("a/one", "main").unwrap();
+    s.upsert_run(&run_full(
+        1,
+        "a/one",
+        "Run tests",
+        "completed",
+        Some("success"),
+        "2026-08-04T09:00:00Z",
+    ))
+    .unwrap();
+
+    assert_eq!(
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
+        Some(4242)
+    );
+    assert_eq!(
+        s.repo_history("a/one", 10).unwrap()[0].runs[0].workflow_id,
+        Some(4242)
+    );
+}
+
+#[test]
+fn runs_stored_before_the_migration_have_no_workflow_id() {
+    let s = Store::open_in_memory().unwrap();
+    s.upsert_repo("a/one", "main").unwrap();
+    let mut r = run_full(
+        1,
+        "a/one",
+        "W",
+        "completed",
+        Some("success"),
+        "2026-08-04T09:00:00Z",
+    );
+    r.workflow_id = None;
+    s.upsert_run(&r).unwrap();
+
+    assert_eq!(
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
+        None
+    );
+}
+
+#[test]
+fn migration_is_idempotent_and_clears_etags_only_once() {
+    let dir = std::env::temp_dir().join(format!("ghwd-migration-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let path = dir.join("runs.db");
+
+    // First open creates the schema fresh.
+    {
+        let s = Store::open(&path).unwrap();
+        s.upsert_repo("a/one", "main").unwrap();
+        s.set_repo_etag("a/one", "W/\"abc\"").unwrap();
+    }
+    // Re-opening must not error, must not re-run the migration, and so must
+    // leave the ETag alone — otherwise every restart would force a full resync.
+    {
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.repo_etag("a/one").unwrap(), Some("W/\"abc\"".to_string()));
+        s.upsert_run(&run_full(
+            1,
+            "a/one",
+            "W",
+            "completed",
+            Some("success"),
+            "2026-08-04T09:00:00Z",
+        ))
+        .unwrap();
+        assert_eq!(s.repo_summaries(false).unwrap().len(), 1);
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn migration_adds_the_column_and_clears_etags_on_an_old_database() {
+    let dir = std::env::temp_dir().join(format!("ghwd-oldmigration-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("runs.db");
+
+    // Build a pre-migration database by hand: no workflow_id column.
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE repos (
+                 full_name TEXT PRIMARY KEY, default_branch TEXT NOT NULL, etag TEXT,
+                 last_synced TEXT, ignored INTEGER NOT NULL DEFAULT 0);
+             CREATE TABLE runs (
+                 id INTEGER PRIMARY KEY,
+                 repo_full_name TEXT NOT NULL REFERENCES repos(full_name) ON DELETE CASCADE,
+                 workflow_name TEXT NOT NULL, branch TEXT NOT NULL, actor TEXT NOT NULL,
+                 status TEXT NOT NULL, conclusion TEXT, commit_sha TEXT NOT NULL,
+                 commit_subject TEXT NOT NULL, html_url TEXT NOT NULL, started_at TEXT NOT NULL);
+             INSERT INTO repos (full_name, default_branch, etag)
+                 VALUES ('a/one', 'main', 'W/\"stale\"');",
+        )
+        .unwrap();
+    }
+
+    let s = Store::open(&path).unwrap();
+    // The ETag is cleared so the next cycle refetches and backfills workflow_id.
+    assert_eq!(s.repo_etag("a/one").unwrap(), None);
+    // And the new column exists.
+    s.upsert_run(&run_full(
+        1,
+        "a/one",
+        "W",
+        "completed",
+        Some("success"),
+        "2026-08-04T09:00:00Z",
+    ))
+    .unwrap();
+    assert_eq!(
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
+        Some(4242)
+    );
+
+    drop(s);
+    let _ = std::fs::remove_dir_all(&dir);
 }

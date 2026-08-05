@@ -44,6 +44,9 @@ pub struct StoredRun {
     pub commit_subject: String,
     pub html_url: String,
     pub started_at: String,
+    /// GitHub's workflow ID, used to link to the workflow's own page. `None`
+    /// for rows stored before the column existed, until they are refetched.
+    pub workflow_id: Option<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -83,6 +86,9 @@ impl Health {
 #[derive(Debug, Clone, Serialize)]
 pub struct WorkflowSummary {
     pub workflow_name: String,
+    /// `None` until the run is refetched after the migration; the page omits
+    /// the link rather than pointing at a workflow that cannot be resolved.
+    pub workflow_id: Option<i64>,
     pub health: Health,
     pub branch: String,
     pub commit_subject: String,
@@ -131,9 +137,34 @@ impl Store {
         conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         conn.execute_batch(SCHEMA)
             .context("failed to create schema")?;
+        Store::migrate(&conn).context("failed to migrate schema")?;
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// Bring an older database up to date. Idempotent: each step checks whether
+    /// it has already been applied, so this runs on every open and does nothing
+    /// after the first time.
+    fn migrate(conn: &Connection) -> Result<()> {
+        let has_workflow_id = conn
+            .prepare("SELECT 1 FROM pragma_table_info('runs') WHERE name = 'workflow_id'")?
+            .exists([])?;
+        if !has_workflow_id {
+            // Clearing the ETags in the same step is what backfills the new
+            // column: every repository looks changed on the next cycle, so its
+            // runs are refetched once with the workflow ID attached. Doing it
+            // here means it happens exactly once, on the first open after the
+            // upgrade — a restart must not force a full resync.
+            conn.execute_batch(
+                "BEGIN;
+                 ALTER TABLE runs ADD COLUMN workflow_id INTEGER;
+                 UPDATE repos SET etag = NULL;
+                 COMMIT;",
+            )
+            .context("failed to add runs.workflow_id")?;
+        }
+        Ok(())
     }
 
     /// A panic elsewhere must not disable the whole dashboard: a poisoned lock
@@ -214,13 +245,14 @@ impl Store {
         let conn = self.conn();
         conn.execute(
             "INSERT INTO runs (id, repo_full_name, workflow_name, branch, actor, status,
-                               conclusion, commit_sha, commit_subject, html_url, started_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                               conclusion, commit_sha, commit_subject, html_url, started_at, workflow_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                  status = excluded.status,
                  conclusion = excluded.conclusion,
                  commit_subject = excluded.commit_subject,
-                 started_at = excluded.started_at",
+                 started_at = excluded.started_at,
+                 workflow_id = excluded.workflow_id",
             params![
                 r.id,
                 r.repo_full_name,
@@ -233,6 +265,7 @@ impl Store {
                 r.commit_subject,
                 r.html_url,
                 r.started_at,
+                r.workflow_id,
             ],
         )?;
         Ok(())
@@ -244,10 +277,11 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT repo_full_name, workflow_name, status, conclusion, branch,
-                    commit_subject, html_url, started_at
+                    commit_subject, html_url, started_at, workflow_id
              FROM (
                  SELECT runs.repo_full_name, runs.workflow_name, runs.status, runs.conclusion,
                         runs.branch, runs.commit_subject, runs.html_url, runs.started_at,
+                        runs.workflow_id,
                         ROW_NUMBER() OVER (
                             PARTITION BY runs.repo_full_name, runs.workflow_name
                             ORDER BY runs.started_at DESC, runs.id DESC
@@ -270,6 +304,7 @@ impl Store {
                     row.get::<_, String>(0)?,
                     WorkflowSummary {
                         workflow_name: row.get(1)?,
+                        workflow_id: row.get(8)?,
                         health: Health::of(&status, conclusion.as_deref()),
                         branch: row.get(4)?,
                         commit_subject: row.get(5)?,
@@ -321,7 +356,7 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, repo_full_name, workflow_name, branch, actor, status, conclusion,
-                    commit_sha, commit_subject, html_url, started_at
+                    commit_sha, commit_subject, html_url, started_at, workflow_id
              FROM (
                  SELECT runs.*,
                         ROW_NUMBER() OVER (
@@ -350,6 +385,7 @@ impl Store {
                     commit_subject: row.get(8)?,
                     html_url: row.get(9)?,
                     started_at: row.get(10)?,
+                    workflow_id: row.get(11)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
