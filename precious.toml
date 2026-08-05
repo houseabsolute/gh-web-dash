@@ -1,0 +1,87 @@
+exclude = ["target"]
+
+[commands.clippy]
+type = "lint"
+include = "**/*.rs"
+invoke = "once"
+path-args = "none"
+working-dir = "root"
+cmd = [
+    "cargo",
+    "clippy",
+    "--color",
+    "always",
+    "--locked",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "clippy::pedantic",
+    "-D",
+    "warnings",
+]
+ok_exit_codes = 0
+lint_failure_exit_codes = 101
+expect_stderr = true
+
+[commands."clippy --fix"]
+type = "tidy"
+include = "**/*.rs"
+invoke = "once"
+path-args = "none"
+working-dir = "root"
+cmd = [
+    "cargo",
+    "clippy",
+    "--fix",
+    "--allow-dirty",
+    "--locked",
+    "--workspace",
+    "--all-targets",
+    "--all-features",
+    "--",
+    "-D",
+    "clippy::pedantic",
+]
+ok_exit_codes = 0
+lint_failure_exit_codes = 101
+expect_stderr = true
+
+[commands.rustfmt]
+type = "both"
+include = "**/*.rs"
+cmd = ["rustfmt", "--edition", "2021"]
+lint_flags = "--check"
+ok_exit_codes = [0]
+lint_failure_exit_codes = [1]
+
+# The js include is an addition to the setup used by the other Rust projects
+# here: this repo ships browser assets, which would otherwise go unformatted.
+[commands.oxfmt]
+type = "both"
+include = ["**/*.md", "**/*.yml", "**/*.toml", "**/*.js"]
+cmd = ["oxfmt"]
+lint-flags = "--check"
+tidy-flags = "--write"
+ok-exit-codes = 0
+lint-failure-exit-codes = 1
+
+[commands.omegasort-gitignore]
+type = "both"
+include = "**/.gitignore"
+cmd = ["omegasort", "--sort", "path", "--unique"]
+lint-flags = "--check"
+tidy-flags = "--in-place"
+ok-exit-codes = 0
+lint-failure-exit-codes = 1
+ignore-stderr = ["The .+ file is not sorted", "The .+ file is not unique"]
+
+[commands.typos]
+type = "both"
+include = "**/*"
+cmd = "typos"
+tidy_flags = "--write-changes"
+invoke = "once"
+ok-exit-codes = 0
+lint-failure-exit-codes = 2

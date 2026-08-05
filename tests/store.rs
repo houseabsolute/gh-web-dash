@@ -16,7 +16,7 @@ fn run_full(
         branch: "main".to_string(),
         actor: "autarch".to_string(),
         status: status.to_string(),
-        conclusion: conclusion.map(|s| s.to_string()),
+        conclusion: conclusion.map(std::string::ToString::to_string),
         commit_sha: "abc123".to_string(),
         commit_subject: "Do a thing".to_string(),
         html_url: format!("https://github.com/{repo}/actions/runs/{id}"),
@@ -300,7 +300,7 @@ fn repos_are_sorted_by_most_recent_activity() {
     {
         s.upsert_repo(repo, "main").unwrap();
         s.upsert_run(&run_full(
-            i as i64 + 1,
+            i64::try_from(i).unwrap() + 1,
             repo,
             "W",
             "completed",

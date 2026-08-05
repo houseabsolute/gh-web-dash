@@ -1,0 +1,51 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+env:
+  CRATE_NAME: gh-web-dash
+  RUST_BACKTRACE: 1
+
+# There's not much value in running self-check on multiple platforms. Either
+# we're lint-clean or not. We do run on each rust target to catch warnings
+# coming from clippy in future rust versions.
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain:
+          - stable
+          - beta
+          - nightly
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: clippy,rustfmt
+      - name: Install mise
+        run: |
+          set -e
+          set -x
+          curl https://mise.run | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install tools
+        run: mise install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run precious lint --all
+        run: mise exec -- precious --debug lint --all
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

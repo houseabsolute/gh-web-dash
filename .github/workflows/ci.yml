@@ -1,0 +1,51 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+
+env:
+  CRATE_NAME: gh-web-dash
+  GITHUB_TOKEN: ${{ github.token }}
+  RUST_BACKTRACE: 1
+
+jobs:
+  test:
+    name: ${{ matrix.platform.os-name }} with rust ${{ matrix.toolchain }}
+    runs-on: ${{ matrix.platform.runs-on }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # This is a local tool installed with `cargo install`, so there is no
+        # cross-compilation matrix here — just the platforms someone might
+        # plausibly run it on.
+        platform:
+          - os-name: Linux-x86_64
+            runs-on: ubuntu-24.04
+          - os-name: macOS-aarch64
+            runs-on: macOS-latest
+          - os-name: Windows-x86_64
+            runs-on: windows-latest
+        toolchain:
+          - stable
+        include:
+          - platform:
+              os-name: Linux-x86_64
+              runs-on: ubuntu-24.04
+            toolchain: beta
+          - platform:
+              os-name: Linux-x86_64
+              runs-on: ubuntu-24.04
+            toolchain: nightly
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@v2
+      - name: Install toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.toolchain }}
+      - name: Run tests
+        run: cargo test --locked --all-features

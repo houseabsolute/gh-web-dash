@@ -6,12 +6,14 @@ pub struct RunCandidate {
     pub actor_type: String,
 }
 
+#[must_use]
 pub fn is_bot(actor_login: &str, actor_type: &str) -> bool {
     actor_type.eq_ignore_ascii_case("bot") || actor_login.to_ascii_lowercase().ends_with("[bot]")
 }
 
 /// Keep runs on the default branch, plus runs authored by the current user.
 /// Bot-authored runs are never kept.
+#[must_use]
 pub fn should_keep(c: &RunCandidate, default_branch: &str, current_user: &str) -> bool {
     if is_bot(&c.actor_login, &c.actor_type) {
         return false;

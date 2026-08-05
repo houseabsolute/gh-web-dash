@@ -1,12 +1,19 @@
 # gh-web-dash Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development
+> (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A single Rust binary that serves a local web dashboard of recent GitHub Actions runs across all of the user's repositories.
+**Goal:** A single Rust binary that serves a local web dashboard of recent GitHub Actions runs
+across all of the user's repositories.
 
-**Architecture:** A background poller fetches workflow runs from the GitHub API and writes them to SQLite. An axum HTTP server reads only from SQLite and serves one dense, time-ordered feed page. The request path never touches GitHub, so page loads are fast and a GitHub outage becomes a staleness problem rather than a broken dashboard.
+**Architecture:** A background poller fetches workflow runs from the GitHub API and writes them to
+SQLite. An axum HTTP server reads only from SQLite and serves one dense, time-ordered feed page. The
+request path never touches GitHub, so page loads are fast and a GitHub outage becomes a staleness
+problem rather than a broken dashboard.
 
-**Tech Stack:** Rust, tokio, axum 0.8, reqwest, rusqlite (bundled SQLite), serde, chrono, globset, wiremock (tests).
+**Tech Stack:** Rust, tokio, axum 0.8, reqwest, rusqlite (bundled SQLite), serde, chrono, globset,
+wiremock (tests).
 
 **Spec:** `docs/superpowers/specs/2026-08-04-gh-web-dash-design.md`
 
@@ -14,31 +21,32 @@
 
 ## File Structure
 
-| File | Responsibility |
-|---|---|
-| `Cargo.toml` | Crate metadata and dependencies |
-| `src/main.rs` | CLI args, wiring, ephemeral port bind, browser launch, poll loop spawn |
-| `src/config.rs` | Parse `~/.config/gh-web-dash/config.toml`; ignore-glob matching |
-| `src/auth.rs` | Resolve a GitHub token from `gh auth token` or `$GITHUB_TOKEN` |
-| `src/filter.rs` | Pure predicate deciding which runs are kept |
-| `src/github.rs` | GitHub REST client: repos, runs, ETags, rate-limit reporting |
-| `src/store.rs` | SQLite schema and every query |
-| `src/server.rs` | axum routes and handlers |
-| `src/sync.rs` | The sync cycle: discovery, fetch, filter, upsert, prune |
-| `src/assets/index.html` | Page shell (embedded at compile time) |
-| `src/assets/app.css` | Styles (embedded) |
-| `src/assets/app.js` | Polling, rendering, chip filtering (embedded) |
-| `tests/api.rs` | Integration tests for the HTTP surface against a seeded store |
+| File                    | Responsibility                                                         |
+| ----------------------- | ---------------------------------------------------------------------- |
+| `Cargo.toml`            | Crate metadata and dependencies                                        |
+| `src/main.rs`           | CLI args, wiring, ephemeral port bind, browser launch, poll loop spawn |
+| `src/config.rs`         | Parse `~/.config/gh-web-dash/config.toml`; ignore-glob matching        |
+| `src/auth.rs`           | Resolve a GitHub token from `gh auth token` or `$GITHUB_TOKEN`         |
+| `src/filter.rs`         | Pure predicate deciding which runs are kept                            |
+| `src/github.rs`         | GitHub REST client: repos, runs, ETags, rate-limit reporting           |
+| `src/store.rs`          | SQLite schema and every query                                          |
+| `src/server.rs`         | axum routes and handlers                                               |
+| `src/sync.rs`           | The sync cycle: discovery, fetch, filter, upsert, prune                |
+| `src/assets/index.html` | Page shell (embedded at compile time)                                  |
+| `src/assets/app.css`    | Styles (embedded)                                                      |
+| `src/assets/app.js`     | Polling, rendering, chip filtering (embedded)                          |
+| `tests/api.rs`          | Integration tests for the HTTP surface against a seeded store          |
 
-Each module is testable without the others: `config`, `auth`, and `filter` are
-pure logic; `github` takes a base URL so it can point at a mock server; `store`
-opens in-memory SQLite; `server` takes a `Store`.
+Each module is testable without the others: `config`, `auth`, and `filter` are pure logic; `github`
+takes a base URL so it can point at a mock server; `store` opens in-memory SQLite; `server` takes a
+`Store`.
 
 ---
 
 ### Task 1: Project scaffold
 
 **Files:**
+
 - Create: `Cargo.toml`
 - Create: `src/main.rs`
 - Create: `.gitignore` (already exists — verify contents)
@@ -91,19 +99,18 @@ fn main() {
 }
 ```
 
-Create empty `src/auth.rs`, `src/config.rs`, `src/filter.rs`, `src/github.rs`,
-`src/server.rs`, `src/store.rs`, `src/sync.rs` so the module declarations
-resolve. Each may be a single blank line for now.
+Create empty `src/auth.rs`, `src/config.rs`, `src/filter.rs`, `src/github.rs`, `src/server.rs`,
+`src/store.rs`, `src/sync.rs` so the module declarations resolve. Each may be a single blank line
+for now.
 
 - [ ] **Step 3: Verify it builds**
 
-Run: `cargo build`
-Expected: compiles with warnings about unused modules, no errors.
+Run: `cargo build` Expected: compiles with warnings about unused modules, no errors.
 
 - [ ] **Step 4: Verify `.gitignore` contains `/target`**
 
-Run: `cat .gitignore`
-Expected: includes `/target`, `/.superpowers/`, `*.db`. Add any that are missing.
+Run: `cat .gitignore` Expected: includes `/target`, `/.superpowers/`, `*.db`. Add any that are
+missing.
 
 - [ ] **Step 5: Commit**
 
@@ -117,12 +124,12 @@ git commit -m "chore: scaffold gh-web-dash crate"
 ### Task 2: Config parsing and ignore globs
 
 **Files:**
+
 - Modify: `src/config.rs`
 
-`Config` is what the user's TOML deserializes into. `ignore` holds glob patterns
-matched against `owner/repo` strings. Globs are compiled once into a
-`globset::GlobSet` because matching happens for every repository on every
-discovery pass.
+`Config` is what the user's TOML deserializes into. `ignore` holds glob patterns matched against
+`owner/repo` strings. Globs are compiled once into a `globset::GlobSet` because matching happens for
+every repository on every discovery pass.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -184,8 +191,7 @@ ignore = ["autarch/old-*"]
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test config::`
-Expected: FAIL — `Config` not found.
+Run: `cargo test config::` Expected: FAIL — `Config` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -290,12 +296,11 @@ pub fn default_db_path() -> Result<PathBuf> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test config::`
-Expected: 5 tests pass.
+Run: `cargo test config::` Expected: 5 tests pass.
 
-Note: `globset` treats `*` as not matching `/` by default, which is what makes
-the `other/old-thing` assertion pass. If it fails, the glob needs
-`Glob::new(pat)` with default options — do not enable `literal_separator(false)`.
+Note: `globset` treats `*` as not matching `/` by default, which is what makes the `other/old-thing`
+assertion pass. If it fails, the glob needs `Glob::new(pat)` with default options — do not enable
+`literal_separator(false)`.
 
 - [ ] **Step 5: Commit**
 
@@ -309,11 +314,11 @@ git commit -m "feat: config parsing with ignore globs"
 ### Task 3: Token resolution
 
 **Files:**
+
 - Modify: `src/auth.rs`
 
-The decision logic (prefer `gh`, fall back to the environment, error naming both)
-is separated from running the subprocess so it can be tested without a `gh`
-binary present.
+The decision logic (prefer `gh`, fall back to the environment, error naming both) is separated from
+running the subprocess so it can be tested without a `gh` binary present.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -359,8 +364,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test auth::`
-Expected: FAIL — `choose_token` not found.
+Run: `cargo test auth::` Expected: FAIL — `choose_token` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -402,8 +406,7 @@ pub async fn resolve_token() -> Result<String> {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test auth::`
-Expected: 5 tests pass.
+Run: `cargo test auth::` Expected: 5 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -417,11 +420,12 @@ git commit -m "feat: resolve GitHub token from gh CLI or environment"
 ### Task 4: Run filtering
 
 **Files:**
+
 - Modify: `src/filter.rs`
 
-This is where the subtle bugs live, so it gets the most test cases. The rule:
-keep a run if it is on the repository's default branch, **or** its actor is the
-authenticated user. Drop anything bot-authored regardless of branch.
+This is where the subtle bugs live, so it gets the most test cases. The rule: keep a run if it is on
+the repository's default branch, **or** its actor is the authenticated user. Drop anything
+bot-authored regardless of branch.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -500,8 +504,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test filter::`
-Expected: FAIL — `RunCandidate` not found.
+Run: `cargo test filter::` Expected: FAIL — `RunCandidate` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -532,8 +535,7 @@ pub fn should_keep(c: &RunCandidate, default_branch: &str, current_user: &str) -
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test filter::`
-Expected: 10 tests pass.
+Run: `cargo test filter::` Expected: 10 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -547,11 +549,12 @@ git commit -m "feat: run filtering by branch and actor"
 ### Task 5: SQLite store
 
 **Files:**
+
 - Modify: `src/store.rs`
 
-`Store` owns the schema and every query. Because `rusqlite` is synchronous and
-the poll cycle is not hot, the connection is wrapped in a `Mutex` and shared —
-simpler than a pool and adequate for one user.
+`Store` owns the schema and every query. Because `rusqlite` is synchronous and the poll cycle is not
+hot, the connection is wrapped in a `Mutex` and shared — simpler than a pool and adequate for one
+user.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -689,8 +692,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test store::`
-Expected: FAIL — `Store` not found.
+Run: `cargo test store::` Expected: FAIL — `Store` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -935,8 +937,7 @@ impl Store {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test store::`
-Expected: 9 tests pass.
+Run: `cargo test store::` Expected: 9 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -950,11 +951,11 @@ git commit -m "feat: SQLite store for repos and runs"
 ### Task 6: GitHub API client
 
 **Files:**
+
 - Modify: `src/github.rs`
 
-The client takes a base URL so tests point it at a `wiremock` server. It reports
-rate-limit headers back to the caller rather than deciding policy itself —
-backoff belongs to the sync loop.
+The client takes a base URL so tests point it at a `wiremock` server. It reports rate-limit headers
+back to the caller rather than deciding policy itself — backoff belongs to the sync loop.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1116,8 +1117,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test github::`
-Expected: FAIL — `Client` not found.
+Run: `cargo test github::` Expected: FAIL — `Client` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1330,8 +1330,7 @@ impl Client {
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test github::`
-Expected: 7 tests pass.
+Run: `cargo test github::` Expected: 7 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1345,10 +1344,11 @@ git commit -m "feat: GitHub API client with ETag and rate-limit reporting"
 ### Task 7: Sync cycle
 
 **Files:**
+
 - Modify: `src/sync.rs`
 
-`SyncState` is the shared status the header displays. `sync_once` runs one full
-cycle; per-repository errors are counted and logged, never fatal.
+`SyncState` is the shared status the header displays. `sync_once` runs one full cycle;
+per-repository errors are counted and logged, never fatal.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1493,8 +1493,7 @@ mod tests {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test sync::`
-Expected: FAIL — `SyncState` not found.
+Run: `cargo test sync::` Expected: FAIL — `SyncState` not found.
 
 - [ ] **Step 3: Write the implementation**
 
@@ -1652,8 +1651,7 @@ pub async fn sync_runs(client: &Client, store: &Store, state: &SyncState, curren
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cargo test sync::`
-Expected: 5 tests pass.
+Run: `cargo test sync::` Expected: 5 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -1667,6 +1665,7 @@ git commit -m "feat: sync cycle with discovery, filtering, and pruning"
 ### Task 8: HTTP server and page assets
 
 **Files:**
+
 - Modify: `src/server.rs`
 - Create: `src/assets/index.html`
 - Create: `src/assets/app.css`
@@ -1790,8 +1789,7 @@ async fn sync_endpoint_accepts_a_trigger() {
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cargo test --test api`
-Expected: FAIL — no library target / `gh_web_dash` not found.
+Run: `cargo test --test api` Expected: FAIL — no library target / `gh_web_dash` not found.
 
 - [ ] **Step 3: Add a library target so integration tests can import the modules**
 
@@ -1813,9 +1811,8 @@ Replace the module declarations at the top of `src/main.rs` with:
 use gh_web_dash::{auth, config, github, server, store, sync};
 ```
 
-(The rest of `main.rs` is written in Task 9; for now keep its `fn main()` body as
-the placeholder `println!`, and add `#[allow(unused_imports)]` above the `use` if
-the build warns.)
+(The rest of `main.rs` is written in Task 9; for now keep its `fn main()` body as the placeholder
+`println!`, and add `#[allow(unused_imports)]` above the `use` if the build warns.)
 
 - [ ] **Step 4: Write the server implementation**
 
@@ -1964,12 +1961,18 @@ Create `src/assets/app.css`:
     --border: #30363d;
   }
 }
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font: 13px/1.4 -apple-system, "Segoe UI", system-ui, sans-serif;
+  font:
+    13px/1.4 -apple-system,
+    "Segoe UI",
+    system-ui,
+    sans-serif;
 }
 header {
   display: flex;
@@ -1982,9 +1985,18 @@ header {
   background: var(--bg);
   flex-wrap: wrap;
 }
-h1 { font-size: 14px; margin: 0 8px 0 0; }
-.spacer { flex: 1; }
-.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+h1 {
+  font-size: 14px;
+  margin: 0 8px 0 0;
+}
+.spacer {
+  flex: 1;
+}
+.chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
 .chip {
   border: 1px solid var(--border);
   border-radius: 99px;
@@ -1994,10 +2006,23 @@ h1 { font-size: 14px; margin: 0 8px 0 0; }
   background: none;
   color: inherit;
 }
-.chip.on { background: #0969da; border-color: #0969da; color: #fff; }
-.status { color: var(--muted); font-size: 12px; }
-.status.stale, .status.warn { color: var(--warn); font-weight: 600; }
-.hidden { display: none; }
+.chip.on {
+  background: #0969da;
+  border-color: #0969da;
+  color: #fff;
+}
+.status {
+  color: var(--muted);
+  font-size: 12px;
+}
+.status.stale,
+.status.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+.hidden {
+  display: none;
+}
 button#refresh {
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -2006,21 +2031,62 @@ button#refresh {
   padding: 3px 10px;
   cursor: pointer;
 }
-table { width: 100%; border-collapse: collapse; }
-tr { border-bottom: 1px solid var(--border); }
-tr:hover { background: rgba(127, 127, 127, 0.08); }
-td { padding: 6px 10px; white-space: nowrap; }
-td a { color: inherit; text-decoration: none; display: block; }
-.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
-.dot.ok { background: var(--ok); }
-.dot.bad { background: var(--bad); }
-.dot.run { background: var(--run); }
-.dot.other { background: var(--muted); }
-.repo { font-weight: 600; }
-.muted { color: var(--muted); }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-td.time { text-align: right; color: var(--muted); width: 1%; }
-.empty { padding: 20px; color: var(--muted); }
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+tr {
+  border-bottom: 1px solid var(--border);
+}
+tr:hover {
+  background: rgba(127, 127, 127, 0.08);
+}
+td {
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+td a {
+  color: inherit;
+  text-decoration: none;
+  display: block;
+}
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot.ok {
+  background: var(--ok);
+}
+.dot.bad {
+  background: var(--bad);
+}
+.dot.run {
+  background: var(--run);
+}
+.dot.other {
+  background: var(--muted);
+}
+.repo {
+  font-weight: 600;
+}
+.muted {
+  color: var(--muted);
+}
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+td.time {
+  text-align: right;
+  color: var(--muted);
+  width: 1%;
+}
+.empty {
+  padding: 20px;
+  color: var(--muted);
+}
 ```
 
 Create `src/assets/app.js`:
@@ -2054,16 +2120,41 @@ function renderChips(workflows) {
   const chips = document.getElementById("chips");
   const wanted = ["__all__", "__failures__"].concat(workflows);
   // Rebuild only when the set of chips changed, so clicks are not lost mid-poll.
-  if (chips.dataset.keys === wanted.join(" ")) {
+  if (chips.dataset.keys === wanted.join("�")) {
     updateChipState();
     return;
   }
-  chips.dataset.keys = wanted.join(" ");
+  chips.dataset.keys = wanted.join("�");
   chips.innerHTML = "";
-  chips.appendChild(makeChip("All", () => { failuresOnly = false; workflow = null; }, "all"));
-  chips.appendChild(makeChip("Failures only", () => { failuresOnly = true; }, "failures"));
+  chips.appendChild(
+    makeChip(
+      "All",
+      () => {
+        failuresOnly = false;
+        workflow = null;
+      },
+      "all",
+    ),
+  );
+  chips.appendChild(
+    makeChip(
+      "Failures only",
+      () => {
+        failuresOnly = true;
+      },
+      "failures",
+    ),
+  );
   for (const w of workflows) {
-    chips.appendChild(makeChip(w, () => { workflow = workflow === w ? null : w; }, "wf:" + w));
+    chips.appendChild(
+      makeChip(
+        w,
+        () => {
+          workflow = workflow === w ? null : w;
+        },
+        "wf:" + w,
+      ),
+    );
   }
   updateChipState();
 }
@@ -2113,7 +2204,10 @@ function renderRows(runs) {
       a.target = "_blank";
       a.rel = "noopener";
       if (i === 0) a.innerHTML = content;
-      else { a.textContent = content; a.className = cls; }
+      else {
+        a.textContent = content;
+        a.className = cls;
+      }
       td.appendChild(a);
       tr.appendChild(td);
     });
@@ -2175,8 +2269,7 @@ setInterval(load, POLL_MS);
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cargo test --test api`
-Expected: 7 tests pass.
+Run: `cargo test --test api` Expected: 7 tests pass.
 
 - [ ] **Step 7: Commit**
 
@@ -2190,6 +2283,7 @@ git commit -m "feat: HTTP server and dashboard page"
 ### Task 9: Wire it together
 
 **Files:**
+
 - Modify: `src/main.rs`
 
 Binds an ephemeral port, opens the browser, and runs the poll loop until killed.
@@ -2308,27 +2402,25 @@ async fn main() -> Result<()> {
 
 - [ ] **Step 2: Verify the whole suite builds and passes**
 
-Run: `cargo test`
-Expected: all tests across `config`, `auth`, `filter`, `store`, `github`, `sync`,
+Run: `cargo test` Expected: all tests across `config`, `auth`, `filter`, `store`, `github`, `sync`,
 and `tests/api.rs` pass.
 
 - [ ] **Step 3: Check formatting and lints**
 
-Run: `cargo fmt --check && cargo clippy --all-targets -- -D warnings`
-Expected: clean. Fix anything reported.
+Run: `cargo fmt --check && cargo clippy --all-targets -- -D warnings` Expected: clean. Fix anything
+reported.
 
 - [ ] **Step 4: Manual smoke test**
 
 Run: `cargo run`
 
-Expected: a browser opens on `http://127.0.0.1:<random port>`; the header shows
-"syncing…" and then "synced Ns ago"; rows appear within a couple of minutes as
-the first sync completes. Click a row — it opens the run on github.com in a new
-tab. Click "Failures only" — the table filters. Click "Refresh now" — the
-synced-at time resets.
+Expected: a browser opens on `http://127.0.0.1:<random port>`; the header shows "syncing…" and then
+"synced Ns ago"; rows appear within a couple of minutes as the first sync completes. Click a row —
+it opens the run on github.com in a new tab. Click "Failures only" — the table filters. Click
+"Refresh now" — the synced-at time resets.
 
-If the first sync is slow, that is expected: ~100 repositories with cold ETags.
-Subsequent cycles are mostly 304s.
+If the first sync is slow, that is expected: ~100 repositories with cold ETags. Subsequent cycles
+are mostly 304s.
 
 - [ ] **Step 5: Commit**
 
@@ -2342,6 +2434,7 @@ git commit -m "feat: wire up server, poll loop, and browser launch"
 ### Task 10: README
 
 **Files:**
+
 - Create: `README.md`
 
 - [ ] **Step 1: Write `README.md`**
@@ -2349,8 +2442,7 @@ git commit -m "feat: wire up server, poll loop, and browser launch"
 ```markdown
 # gh-web-dash
 
-A local web dashboard showing recent GitHub Actions runs across all your
-repositories.
+A local web dashboard showing recent GitHub Actions runs across all your repositories.
 
 ## Install
 
@@ -2360,8 +2452,8 @@ repositories.
 
     gh-web-dash
 
-It binds a random local port, opens your browser, and starts polling GitHub. It
-authenticates with `gh auth token`, falling back to `$GITHUB_TOKEN`.
+It binds a random local port, opens your browser, and starts polling GitHub. It authenticates with
+`gh auth token`, falling back to `$GITHUB_TOKEN`.
 
 Options:
 
@@ -2380,9 +2472,8 @@ Options:
 
 ## What it shows
 
-A time-ordered feed of workflow runs on each repository's default branch, plus
-runs on branches you authored. Bot-authored runs are excluded. Clicking a row
-opens the run on github.com.
+A time-ordered feed of workflow runs on each repository's default branch, plus runs on branches you
+authored. Bot-authored runs are excluded. Clicking a row opens the run on github.com.
 
 Data is cached in `~/.config/gh-web-dash/runs.db` and pruned after 30 days.
 ```
@@ -2398,12 +2489,10 @@ git commit -m "docs: add README"
 
 ## Notes for the implementer
 
-- **Version drift.** The dependency versions above were current when this plan
-  was written. If `cargo build` reports an API mismatch — particularly for
-  `axum`, `rusqlite`, or `thiserror` — check the crate's docs for the version
-  cargo resolved rather than pinning backwards.
-- **`Store` is `Clone`.** It clones the `Arc<Mutex<Connection>>`, so every clone
-  shares one connection. That is intentional; do not swap in a pool without a
-  reason.
-- **Do not add features not in the plan.** Inline log drill-down, run
-  re-triggering, and historical analytics are explicitly out of scope for v1.
+- **Version drift.** The dependency versions above were current when this plan was written. If
+  `cargo build` reports an API mismatch — particularly for `axum`, `rusqlite`, or `thiserror` —
+  check the crate's docs for the version cargo resolved rather than pinning backwards.
+- **`Store` is `Clone`.** It clones the `Arc<Mutex<Connection>>`, so every clone shares one
+  connection. That is intentional; do not swap in a pool without a reason.
+- **Do not add features not in the plan.** Inline log drill-down, run re-triggering, and historical
+  analytics are explicitly out of scope for v1.

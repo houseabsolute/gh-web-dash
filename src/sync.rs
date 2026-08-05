@@ -48,6 +48,7 @@ pub struct SyncState {
 }
 
 impl SyncState {
+    #[must_use]
     pub fn snapshot(&self) -> SyncStatus {
         self.inner.lock().unwrap().clone()
     }
@@ -93,6 +94,7 @@ impl SyncState {
 }
 
 /// Double the interval when the rate limit is running low.
+#[must_use]
 pub fn effective_interval(base_secs: u64, remaining: Option<i64>) -> u64 {
     match remaining {
         Some(r) if r < RATE_LIMIT_FLOOR => base_secs * 2,
@@ -282,7 +284,7 @@ mod tests {
 
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/a", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         assert!(state.snapshot().progress.is_none(), "idle before the cycle");
@@ -318,7 +320,7 @@ mod tests {
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/ok", "main").unwrap();
         store.upsert_repo("autarch/gone", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         // Observe progress from another task while the cycle runs.
@@ -376,7 +378,7 @@ mod tests {
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/a", "main").unwrap();
         store.upsert_repo("autarch/b", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         sync_runs(&client, &store, &state, "autarch").await;
@@ -397,7 +399,7 @@ mod tests {
 
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/gone", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         sync_runs(&client, &store, &state, "autarch").await;
@@ -425,7 +427,7 @@ mod tests {
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/gone", "main").unwrap();
         store.upsert_repo("autarch/ok", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         sync_runs(&client, &store, &state, "autarch").await;
@@ -451,7 +453,7 @@ mod tests {
 
         let store = crate::store::Store::open_in_memory().unwrap();
         store.upsert_repo("autarch/a", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let state = SyncState::default();
 
         sync_runs(&client, &store, &state, "autarch").await;
@@ -474,7 +476,7 @@ mod tests {
             .await;
 
         let store = crate::store::Store::open_in_memory().unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let cfg = crate::config::Config::from_toml(r#"ignore = ["autarch/old-*"]"#).unwrap();
 
         discover_repos(&client, &store, &cfg).await.unwrap();
@@ -503,7 +505,7 @@ mod tests {
         // Simulate a repo stored from an earlier cycle that has since vanished
         // (deleted, or access revoked).
         store.upsert_repo("autarch/vanished", "main").unwrap();
-        let client = crate::github::Client::new(server.uri(), "t".into()).unwrap();
+        let client = crate::github::Client::new(&server.uri(), "t".into()).unwrap();
         let cfg = crate::config::Config::from_toml("").unwrap();
 
         discover_repos(&client, &store, &cfg).await.unwrap();

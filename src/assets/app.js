@@ -103,8 +103,7 @@ async function loadStatus() {
     // count has to be shown alongside the sync time, not hidden behind it.
     errs.classList.toggle("hidden", !s.error_count);
     if (s.error_count) {
-      errs.textContent =
-        s.error_count + (s.error_count === 1 ? " repo failing" : " repos failing");
+      errs.textContent = s.error_count + (s.error_count === 1 ? " repo failing" : " repos failing");
       errs.title = s.last_error || "";
     }
     const low = s.rate_limit_remaining !== null && s.rate_limit_remaining < 500;

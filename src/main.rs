@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
     let token = gh_web_dash::auth::resolve_token().await?;
     let store = Store::open(&default_db_path()?)?;
-    let client = Client::new(GITHUB_API.to_string(), token)?;
+    let client = Client::new(GITHUB_API, token)?;
 
     let current_user = client
         .current_user()
@@ -64,9 +64,8 @@ async fn main() -> Result<()> {
         tokio::spawn(async move {
             let mut last_discovery: Option<std::time::Instant> = None;
             loop {
-                let due = last_discovery
-                    .map(|t| t.elapsed().as_secs() >= DISCOVERY_INTERVAL_SECS)
-                    .unwrap_or(true);
+                let due =
+                    last_discovery.is_none_or(|t| t.elapsed().as_secs() >= DISCOVERY_INTERVAL_SECS);
                 if due {
                     match discover_repos(&client, &store, &cfg).await {
                         Ok(()) => last_discovery = Some(std::time::Instant::now()),
@@ -83,7 +82,7 @@ async fn main() -> Result<()> {
                 sync_state.record_poll_interval(secs);
                 // Wake early if the browser asked for a sync.
                 tokio::select! {
-                    _ = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {}
+                    () = tokio::time::sleep(std::time::Duration::from_secs(secs)) => {}
                     _ = trigger_rx.recv() => {}
                 }
             }

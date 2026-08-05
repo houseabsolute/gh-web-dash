@@ -23,7 +23,7 @@ fn run(
         branch: "main".into(),
         actor: "autarch".into(),
         status: status.into(),
-        conclusion: conclusion.map(|s| s.to_string()),
+        conclusion: conclusion.map(std::string::ToString::to_string),
         commit_sha: "abc123".into(),
         commit_subject: "Do a thing".into(),
         html_url: format!("https://github.com/{repo}/actions/runs/{id}"),

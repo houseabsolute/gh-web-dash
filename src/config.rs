@@ -76,6 +76,7 @@ pub struct IgnoreMatcher {
 }
 
 impl IgnoreMatcher {
+    #[must_use]
     pub fn is_ignored(&self, full_name: &str) -> bool {
         self.set.is_match(full_name)
     }

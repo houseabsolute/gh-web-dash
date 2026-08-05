@@ -67,10 +67,7 @@ function viewPill(href, label) {
 // resolves to nothing.
 function workflowUrl(repoFullName, workflowPath) {
   return (
-    "https://github.com/" +
-    repoFullName +
-    "/actions/workflows/" +
-    encodeURIComponent(workflowPath)
+    "https://github.com/" + repoFullName + "/actions/workflows/" + encodeURIComponent(workflowPath)
   );
 }
 
@@ -87,7 +84,7 @@ function repoRow(repo) {
 
   const nameCell = cell(repo.full_name, "repo");
   nameCell.appendChild(
-    viewPill("https://github.com/" + repo.full_name, "Open " + repo.full_name + " on GitHub")
+    viewPill("https://github.com/" + repo.full_name, "Open " + repo.full_name + " on GitHub"),
   );
   tr.appendChild(nameCell);
   tr.appendChild(workflowCell(repo.full_name, repo.workflows));
@@ -112,7 +109,10 @@ function workflowCell(repoFullName, workflows) {
     // Only linkable once the run has been refetched with its workflow path.
     if (wf.workflow_path) {
       td.appendChild(
-        viewPill(workflowUrl(repoFullName, wf.workflow_path), "Open " + wf.workflow_name + " on GitHub")
+        viewPill(
+          workflowUrl(repoFullName, wf.workflow_path),
+          "Open " + wf.workflow_name + " on GitHub",
+        ),
       );
     }
   }
@@ -181,8 +181,7 @@ function workflowBlock(wf) {
 
   const latest = wf.runs[0];
   if (latest) {
-    const text =
-      latest.branch + " · " + relTime(latest.started_at) + " · " + latest.commit_subject;
+    const text = latest.branch + " · " + relTime(latest.started_at) + " · " + latest.commit_subject;
     div.appendChild(runLink(latest, "sub mono", text));
   }
   return div;

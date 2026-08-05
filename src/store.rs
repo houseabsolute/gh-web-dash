@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
-const SCHEMA: &str = r#"
+const SCHEMA: &str = r"
 CREATE TABLE IF NOT EXISTS repos (
     full_name      TEXT PRIMARY KEY,
     default_branch TEXT NOT NULL,
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS runs_started_at ON runs(started_at DESC);
-"#;
+";
 
 /// A workflow run as stored and served. Timestamps are RFC 3339 strings, which
 /// sort correctly as text and need no conversion on the way to JSON.
@@ -92,13 +92,14 @@ pub enum Health {
 }
 
 impl Health {
+    #[must_use]
     pub fn of(status: &str, conclusion: Option<&str>) -> Health {
         if status != "completed" {
             return Health::Running;
         }
         match conclusion {
             Some("success") => Health::Success,
-            Some("failure") | Some("timed_out") | Some("startup_failure") => Health::Failure,
+            Some("failure" | "timed_out" | "startup_failure") => Health::Failure,
             // Cancelled, skipped, neutral, action_required: not broken, not green.
             _ => Health::Neutral,
         }
@@ -219,7 +220,9 @@ impl Store {
     /// is recovered rather than propagated, since the connection itself is
     /// still usable.
     fn conn(&self) -> MutexGuard<'_, Connection> {
-        self.conn.lock().unwrap_or_else(|e| e.into_inner())
+        self.conn
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     pub fn upsert_repo(&self, full_name: &str, default_branch: &str) -> Result<()> {
@@ -242,7 +245,7 @@ impl Store {
         let conn = self.conn();
         conn.execute(
             "UPDATE repos SET archived = ?2, pushed_at = ?3 WHERE full_name = ?1",
-            params![full_name, archived as i64, pushed_at],
+            params![full_name, i64::from(archived), pushed_at],
         )?;
         Ok(())
     }
@@ -258,7 +261,7 @@ impl Store {
         let conn = self.conn();
         conn.execute(
             "UPDATE repos SET ignored = ?2, skip_reason = ?3 WHERE full_name = ?1",
-            params![full_name, (!included) as i64, skip_reason],
+            params![full_name, i64::from(!included), skip_reason],
         )?;
         Ok(())
     }
@@ -293,7 +296,10 @@ impl Store {
                     user_override: row.get(3)?,
                     archived: row.get::<_, i64>(4)? != 0,
                     pushed_at: row.get(5)?,
-                    run_count: row.get::<_, i64>(6)? as usize,
+                    // Counts from SQLite are non-negative and far below
+                    // usize::MAX; a saturating conversion documents that
+                    // without pretending a failure case exists.
+                    run_count: usize::try_from(row.get::<_, i64>(6)?).unwrap_or(0),
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -326,12 +332,12 @@ impl Store {
         let conn = self.conn();
         conn.execute(
             "UPDATE repos SET ignored = ?2 WHERE full_name = ?1",
-            params![full_name, ignored as i64],
+            params![full_name, i64::from(ignored)],
         )?;
         Ok(())
     }
 
-    /// The stored ETag, or `None` if the repository has none — or is unknown.
+    /// The stored `ETag`, or `None` if the repository has none — or is unknown.
     pub fn repo_etag(&self, full_name: &str) -> Result<Option<String>> {
         let conn = self.conn();
         let etag = conn
@@ -459,7 +465,7 @@ impl Store {
                 Some(last) if last.full_name == repo => {
                     last.health = last.health.max(wf.health);
                     if wf.started_at > last.started_at {
-                        last.started_at = wf.started_at.clone();
+                        last.started_at.clone_from(&wf.started_at);
                     }
                     last.workflows.push(wf);
                 }
@@ -510,22 +516,25 @@ impl Store {
         )?;
 
         let rows = stmt
-            .query_map(params![full_name, per_workflow as i64], |row| {
-                Ok(StoredRun {
-                    id: row.get(0)?,
-                    repo_full_name: row.get(1)?,
-                    workflow_name: row.get(2)?,
-                    branch: row.get(3)?,
-                    actor: row.get(4)?,
-                    status: row.get(5)?,
-                    conclusion: row.get(6)?,
-                    commit_sha: row.get(7)?,
-                    commit_subject: row.get(8)?,
-                    html_url: row.get(9)?,
-                    started_at: row.get(10)?,
-                    workflow_path: row.get(11)?,
-                })
-            })?
+            .query_map(
+                params![full_name, i64::try_from(per_workflow).unwrap_or(i64::MAX)],
+                |row| {
+                    Ok(StoredRun {
+                        id: row.get(0)?,
+                        repo_full_name: row.get(1)?,
+                        workflow_name: row.get(2)?,
+                        branch: row.get(3)?,
+                        actor: row.get(4)?,
+                        status: row.get(5)?,
+                        conclusion: row.get(6)?,
+                        commit_sha: row.get(7)?,
+                        commit_subject: row.get(8)?,
+                        html_url: row.get(9)?,
+                        started_at: row.get(10)?,
+                        workflow_path: row.get(11)?,
+                    })
+                },
+            )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         let mut out: Vec<WorkflowHistory> = Vec::new();

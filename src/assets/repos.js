@@ -130,8 +130,7 @@ function render() {
     tbody.appendChild(tr);
   }
   document.getElementById("empty").classList.toggle("hidden", shown.length > 0);
-  document.getElementById("summary").textContent =
-    shown.length + " of " + all.length + " shown";
+  document.getElementById("summary").textContent = shown.length + " of " + all.length + " shown";
 }
 
 async function setOverride(repo, value) {

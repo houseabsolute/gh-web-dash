@@ -19,6 +19,7 @@ pub enum GithubError {
 }
 
 impl GithubError {
+    #[must_use]
     pub fn is_unauthorized(&self) -> bool {
         matches!(self, GithubError::Status { status: 401, .. })
     }
@@ -70,6 +71,7 @@ pub struct Run {
 
 impl Run {
     /// The first line of the commit message.
+    #[must_use]
     pub fn commit_subject(&self) -> String {
         self.head_commit
             .as_ref()
@@ -79,6 +81,7 @@ impl Run {
     }
 
     /// When the run started, falling back to `updated_at` if GitHub omits it.
+    #[must_use]
     pub fn started_at(&self) -> String {
         self.run_started_at
             .clone()
@@ -108,7 +111,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(base_url: String, token: String) -> Result<Client> {
+    pub fn new(base_url: &str, token: String) -> Result<Client> {
         // Without a timeout, one hung request stalls the whole poll cycle.
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
@@ -206,7 +209,7 @@ impl Client {
             .headers()
             .get("etag")
             .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
 
         if resp.status().as_u16() == 304 {
             return Ok(RunsResponse {
@@ -239,7 +242,7 @@ mod tests {
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     fn client(server: &MockServer) -> Client {
-        Client::new(server.uri(), "test-token".to_string()).unwrap()
+        Client::new(&server.uri(), "test-token".to_string()).unwrap()
     }
 
     #[tokio::test]

@@ -20,6 +20,7 @@ pub enum Override {
 }
 
 impl Override {
+    #[must_use]
     pub fn parse(s: &str) -> Option<Override> {
         match s {
             "include" => Some(Override::Include),
@@ -28,6 +29,7 @@ impl Override {
         }
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             Override::Include => "include",
@@ -53,6 +55,7 @@ pub enum SkipReason {
 }
 
 impl SkipReason {
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             SkipReason::Muted => "muted",
@@ -63,6 +66,7 @@ impl SkipReason {
         }
     }
 
+    #[must_use]
     pub fn parse(s: &str) -> Option<SkipReason> {
         match s {
             "muted" => Some(SkipReason::Muted),
@@ -82,10 +86,12 @@ pub enum Decision {
 }
 
 impl Decision {
+    #[must_use]
     pub fn is_included(&self) -> bool {
         matches!(self, Decision::Included)
     }
 
+    #[must_use]
     pub fn skip_reason(&self) -> Option<SkipReason> {
         match self {
             Decision::Included => None,
@@ -114,6 +120,7 @@ pub struct RepoFacts<'a> {
 /// repository the rules would skip can still be rescued — otherwise a
 /// scheduled-only workflow in a dormant repository would be unreachable, since
 /// `ignore` globs can only subtract.
+#[must_use]
 pub fn decide(f: &RepoFacts, now: DateTime<Utc>) -> Decision {
     match f.user_override {
         Some(Override::Exclude) => return Decision::Skipped(SkipReason::Muted),
