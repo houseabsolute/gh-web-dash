@@ -18,6 +18,7 @@ Options:
 - `--no-open` — do not open a browser
 - `--config <path>` — use a different config file
 - `--port <port>` — bind a specific port instead of an OS-assigned one
+- `--host <addr>` — bind a specific address (default `127.0.0.1`, this machine only)
 
 ## Development
 
@@ -48,8 +49,11 @@ Or directly, without a container:
     mise exec -- precious lint --all
 
 Inside a container, run the app with `--no-open`: there is no browser to launch. `just run` also
-passes `--port 8420`, which `devcontainer.json` forwards — the OS-assigned default would differ
-every time and be awkward to forward.
+passes `--host 0.0.0.0 --port 8420`. Both are needed to reach it from outside the container: a
+default `127.0.0.1` bind reaches only the container's own loopback, and the port has to be
+predictable to be published. `devcontainer.json` publishes it with `appPort` — note that
+`forwardPorts` alone is an editor feature and does nothing for the `devcontainer` CLI that `just`
+uses. It is published to the host's loopback only, so the dashboard is not exposed to your network.
 
 ## Configuration
 

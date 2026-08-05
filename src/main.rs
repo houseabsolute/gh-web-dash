@@ -26,6 +26,13 @@ struct Args {
     /// bookmarked.
     #[arg(long)]
     port: Option<u16>,
+    /// Address to bind. The default reaches only this machine. Inside a
+    /// container you need 0.0.0.0, or the published port reaches the
+    /// container's own loopback and nothing else — but then anything that can
+    /// route to the container can reach the dashboard, so publish it to the
+    /// host's loopback only.
+    #[arg(long, default_value = "127.0.0.1")]
+    host: std::net::IpAddr,
 }
 
 #[tokio::main]
@@ -103,14 +110,21 @@ async fn main() -> Result<()> {
     // Port 0 asks the OS for any free port, which is the default precisely so
     // there is no "address already in use" failure to think about.
     let requested = args.port.unwrap_or(0);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", requested))
+    let listener = tokio::net::TcpListener::bind((args.host, requested))
         .await
         .with_context(|| match args.port {
             Some(p) => format!("could not bind port {p} — is something already using it?"),
             None => "could not bind a local port".to_string(),
         })?;
-    let port = listener.local_addr()?.port();
-    let url = format!("http://127.0.0.1:{port}");
+    let bound = listener.local_addr()?;
+    let port = bound.port();
+    // 0.0.0.0 is not a browsable address; point at loopback instead.
+    let display_host = if bound.ip().is_unspecified() {
+        "127.0.0.1".to_string()
+    } else {
+        bound.ip().to_string()
+    };
+    let url = format!("http://{display_host}:{port}");
     println!("gh-web-dash listening on {url}");
 
     if !args.no_open {

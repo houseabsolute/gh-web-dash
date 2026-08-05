@@ -40,7 +40,7 @@ tidy *args: _up
 
 # Run the dashboard on a fixed, forwarded port (no browser in a container)
 run *args: _up
-    {{ _dce }} cargo run -- --no-open --port {{ port }} {{ args }}
+    {{ _dce }} cargo run -- --no-open --host 0.0.0.0 --port {{ port }} {{ args }}
 
 # Everything CI checks, in one command
 ci: lint
