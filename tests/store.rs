@@ -21,7 +21,7 @@ fn run_full(
         commit_subject: "Do a thing".to_string(),
         html_url: format!("https://github.com/{repo}/actions/runs/{id}"),
         started_at: started.to_string(),
-        workflow_id: Some(4242),
+        workflow_path: Some(".github/workflows/lint.yml".to_string()),
     }
 }
 
@@ -523,7 +523,7 @@ fn history_of_an_ignored_or_unknown_repo_is_empty() {
 }
 
 #[test]
-fn workflow_id_round_trips_and_reaches_summaries_and_history() {
+fn workflow_path_round_trips_and_reaches_summaries_and_history() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_repo("a/one", "main").unwrap();
     s.upsert_run(&run_full(
@@ -537,17 +537,17 @@ fn workflow_id_round_trips_and_reaches_summaries_and_history() {
     .unwrap();
 
     assert_eq!(
-        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
-        Some(4242)
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_path,
+        Some(".github/workflows/lint.yml".to_string())
     );
     assert_eq!(
-        s.repo_history("a/one", 10).unwrap()[0].runs[0].workflow_id,
-        Some(4242)
+        s.repo_history("a/one", 10).unwrap()[0].runs[0].workflow_path,
+        Some(".github/workflows/lint.yml".to_string())
     );
 }
 
 #[test]
-fn runs_stored_before_the_migration_have_no_workflow_id() {
+fn runs_stored_before_the_migration_have_no_workflow_path() {
     let s = Store::open_in_memory().unwrap();
     s.upsert_repo("a/one", "main").unwrap();
     let mut r = run_full(
@@ -558,11 +558,11 @@ fn runs_stored_before_the_migration_have_no_workflow_id() {
         Some("success"),
         "2026-08-04T09:00:00Z",
     );
-    r.workflow_id = None;
+    r.workflow_path = None;
     s.upsert_run(&r).unwrap();
 
     assert_eq!(
-        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_path,
         None
     );
 }
@@ -639,8 +639,8 @@ fn migration_adds_the_column_and_clears_etags_on_an_old_database() {
     ))
     .unwrap();
     assert_eq!(
-        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_id,
-        Some(4242)
+        s.repo_summaries(false).unwrap()[0].workflows[0].workflow_path,
+        Some(".github/workflows/lint.yml".to_string())
     );
 
     drop(s);

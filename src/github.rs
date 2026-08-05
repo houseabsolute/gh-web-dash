@@ -45,10 +45,10 @@ pub struct Commit {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Run {
     pub id: i64,
-    /// GitHub's ID for the workflow this run belongs to. Used to link to the
-    /// workflow's own page.
+    /// The workflow's file path, e.g. `.github/workflows/lint.yml`. GitHub
+    /// addresses a workflow page by file name, so this is what the link needs.
     #[serde(default)]
-    pub workflow_id: Option<i64>,
+    pub path: Option<String>,
     #[serde(rename = "name", default)]
     pub workflow_name: String,
     #[serde(default)]
@@ -375,7 +375,7 @@ mod tests {
     fn commit_subject_handles_missing_commit() {
         let r = Run {
             id: 1,
-            workflow_id: None,
+            path: None,
             workflow_name: "test.yml".into(),
             head_branch: "main".into(),
             status: "completed".into(),

@@ -119,3 +119,5 @@ a.view {
 }
 a.view:hover { color: var(--fg); border-color: var(--muted); }
 .wf + a.view { margin-right: 6px; }
+a.wfname { color: inherit; text-decoration: none; }
+a.wfname:hover { text-decoration: underline; }

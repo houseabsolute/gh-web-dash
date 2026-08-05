@@ -61,8 +61,12 @@ function viewPill(href, label) {
   return a;
 }
 
-function workflowUrl(repoFullName, workflowId) {
-  return "https://github.com/" + repoFullName + "/actions/workflows/" + workflowId;
+// GitHub addresses a workflow page by its file name, not by numeric ID.
+function workflowUrl(repoFullName, workflowPath) {
+  const file = workflowPath.split("/").pop();
+  return (
+    "https://github.com/" + repoFullName + "/actions/workflows/" + encodeURIComponent(file)
+  );
 }
 
 function repoRow(repo) {
@@ -100,10 +104,10 @@ function workflowCell(repoFullName, workflows) {
     pill.appendChild(dot(wf.health));
     pill.appendChild(document.createTextNode(wf.workflow_name));
     td.appendChild(pill);
-    // Only linkable once the run has been refetched with its workflow ID.
-    if (wf.workflow_id) {
+    // Only linkable once the run has been refetched with its workflow path.
+    if (wf.workflow_path) {
       td.appendChild(
-        viewPill(workflowUrl(repoFullName, wf.workflow_id), "Open " + wf.workflow_name + " on GitHub")
+        viewPill(workflowUrl(repoFullName, wf.workflow_path), "Open " + wf.workflow_name + " on GitHub")
       );
     }
   }
@@ -146,20 +150,21 @@ function workflowBlock(wf) {
   const div = document.createElement("div");
   div.className = "wfblock";
 
-  const name = document.createElement("span");
+  // The name itself is the link here — there is room for it, unlike the
+  // collapsed row where a bare name would not read as clickable.
+  const latestRun = wf.runs[0];
+  const linkable = latestRun && latestRun.workflow_path;
+  const name = document.createElement(linkable ? "a" : "span");
   name.className = "wfname";
   name.textContent = wf.workflow_name;
-  div.appendChild(name);
-
-  const latestRun = wf.runs[0];
-  if (latestRun && latestRun.workflow_id) {
-    div.appendChild(
-      viewPill(
-        workflowUrl(latestRun.repo_full_name, latestRun.workflow_id),
-        "Open " + wf.workflow_name + " on GitHub"
-      )
-    );
+  if (linkable) {
+    name.href = workflowUrl(latestRun.repo_full_name, latestRun.workflow_path);
+    name.target = "_blank";
+    name.rel = "noopener";
+    name.title = "Open " + wf.workflow_name + " on GitHub";
+    name.addEventListener("click", (e) => e.stopPropagation());
   }
+  div.appendChild(name);
 
   // Newest on the left, matching the repo's leading status dot.
   const strip = document.createElement("span");

@@ -44,9 +44,11 @@ pub struct StoredRun {
     pub commit_subject: String,
     pub html_url: String,
     pub started_at: String,
-    /// GitHub's workflow ID, used to link to the workflow's own page. `None`
-    /// for rows stored before the column existed, until they are refetched.
-    pub workflow_id: Option<i64>,
+    /// The workflow's file path, e.g. `.github/workflows/lint.yml`. GitHub's
+    /// workflow page is addressed by file name, not by numeric ID — the ID
+    /// route renders "This workflow does not exist". `None` until the run is
+    /// refetched after the migration.
+    pub workflow_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -88,7 +90,7 @@ pub struct WorkflowSummary {
     pub workflow_name: String,
     /// `None` until the run is refetched after the migration; the page omits
     /// the link rather than pointing at a workflow that cannot be resolved.
-    pub workflow_id: Option<i64>,
+    pub workflow_path: Option<String>,
     pub health: Health,
     pub branch: String,
     pub commit_subject: String,
@@ -147,10 +149,20 @@ impl Store {
     /// it has already been applied, so this runs on every open and does nothing
     /// after the first time.
     fn migrate(conn: &Connection) -> Result<()> {
-        let has_workflow_id = conn
-            .prepare("SELECT 1 FROM pragma_table_info('runs') WHERE name = 'workflow_id'")?
-            .exists([])?;
-        if !has_workflow_id {
+        let has_column = |name: &str| -> Result<bool> {
+            Ok(conn
+                .prepare("SELECT 1 FROM pragma_table_info('runs') WHERE name = ?1")?
+                .exists([name])?)
+        };
+
+        // An earlier version stored a numeric workflow ID. GitHub addresses a
+        // workflow page by file name, so the ID was useless — drop it.
+        if has_column("workflow_id")? {
+            conn.execute_batch("ALTER TABLE runs DROP COLUMN workflow_id;")
+                .context("failed to drop the obsolete runs.workflow_id")?;
+        }
+
+        if !has_column("workflow_path")? {
             // Clearing the ETags in the same step is what backfills the new
             // column: every repository looks changed on the next cycle, so its
             // runs are refetched once with the workflow ID attached. Doing it
@@ -158,11 +170,11 @@ impl Store {
             // upgrade — a restart must not force a full resync.
             conn.execute_batch(
                 "BEGIN;
-                 ALTER TABLE runs ADD COLUMN workflow_id INTEGER;
+                 ALTER TABLE runs ADD COLUMN workflow_path TEXT;
                  UPDATE repos SET etag = NULL;
                  COMMIT;",
             )
-            .context("failed to add runs.workflow_id")?;
+            .context("failed to add runs.workflow_path")?;
         }
         Ok(())
     }
@@ -245,14 +257,14 @@ impl Store {
         let conn = self.conn();
         conn.execute(
             "INSERT INTO runs (id, repo_full_name, workflow_name, branch, actor, status,
-                               conclusion, commit_sha, commit_subject, html_url, started_at, workflow_id)
+                               conclusion, commit_sha, commit_subject, html_url, started_at, workflow_path)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(id) DO UPDATE SET
                  status = excluded.status,
                  conclusion = excluded.conclusion,
                  commit_subject = excluded.commit_subject,
                  started_at = excluded.started_at,
-                 workflow_id = excluded.workflow_id",
+                 workflow_path = excluded.workflow_path",
             params![
                 r.id,
                 r.repo_full_name,
@@ -265,7 +277,7 @@ impl Store {
                 r.commit_subject,
                 r.html_url,
                 r.started_at,
-                r.workflow_id,
+                r.workflow_path,
             ],
         )?;
         Ok(())
@@ -277,11 +289,11 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT repo_full_name, workflow_name, status, conclusion, branch,
-                    commit_subject, html_url, started_at, workflow_id
+                    commit_subject, html_url, started_at, workflow_path
              FROM (
                  SELECT runs.repo_full_name, runs.workflow_name, runs.status, runs.conclusion,
                         runs.branch, runs.commit_subject, runs.html_url, runs.started_at,
-                        runs.workflow_id,
+                        runs.workflow_path,
                         ROW_NUMBER() OVER (
                             PARTITION BY runs.repo_full_name, runs.workflow_name
                             ORDER BY runs.started_at DESC, runs.id DESC
@@ -304,7 +316,7 @@ impl Store {
                     row.get::<_, String>(0)?,
                     WorkflowSummary {
                         workflow_name: row.get(1)?,
-                        workflow_id: row.get(8)?,
+                        workflow_path: row.get(8)?,
                         health: Health::of(&status, conclusion.as_deref()),
                         branch: row.get(4)?,
                         commit_subject: row.get(5)?,
@@ -356,7 +368,7 @@ impl Store {
         let conn = self.conn();
         let mut stmt = conn.prepare(
             "SELECT id, repo_full_name, workflow_name, branch, actor, status, conclusion,
-                    commit_sha, commit_subject, html_url, started_at, workflow_id
+                    commit_sha, commit_subject, html_url, started_at, workflow_path
              FROM (
                  SELECT runs.*,
                         ROW_NUMBER() OVER (
@@ -385,7 +397,7 @@ impl Store {
                     commit_subject: row.get(8)?,
                     html_url: row.get(9)?,
                     started_at: row.get(10)?,
-                    workflow_id: row.get(11)?,
+                    workflow_path: row.get(11)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;

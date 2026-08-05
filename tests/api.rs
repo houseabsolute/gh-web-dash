@@ -27,7 +27,7 @@ fn run(
         commit_subject: "Do a thing".into(),
         html_url: format!("https://github.com/{repo}/actions/runs/{id}"),
         started_at: started.into(),
-        workflow_id: Some(4242),
+        workflow_path: Some(".github/workflows/lint.yml".to_string()),
     }
 }
 
