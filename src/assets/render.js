@@ -61,11 +61,16 @@ function viewPill(href, label) {
   return a;
 }
 
-// GitHub addresses a workflow page by its file name, not by numeric ID.
+// GitHub addresses a workflow page by path, not by numeric ID. The whole path
+// is encoded rather than just its basename: GitHub-generated workflows have
+// paths like "dynamic/github-code-scanning/codeql", where the basename alone
+// resolves to nothing.
 function workflowUrl(repoFullName, workflowPath) {
-  const file = workflowPath.split("/").pop();
   return (
-    "https://github.com/" + repoFullName + "/actions/workflows/" + encodeURIComponent(file)
+    "https://github.com/" +
+    repoFullName +
+    "/actions/workflows/" +
+    encodeURIComponent(workflowPath)
   );
 }
 
