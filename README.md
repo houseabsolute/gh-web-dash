@@ -20,6 +20,38 @@ Options:
 - `--port <port>` — bind a specific port instead of an OS-assigned one
 - `--host <addr>` — bind a specific address (default `127.0.0.1`, this machine only)
 
+## Run it automatically at login
+
+On Linux with systemd, [`dist/gh-web-dash.service`](dist/gh-web-dash.service) is a **user** unit —
+it starts when you log in, runs as you, and so can reach your `gh` credentials and your
+`~/.config/gh-web-dash`. Install the binary, then the service:
+
+    cargo install --path .
+    just install-service
+
+That copies the unit into `~/.config/systemd/user`, enables it, and starts it. The dashboard is then
+at <http://127.0.0.1:8421> — a fixed port, because the default OS-assigned one changes on every
+restart and a long-running dashboard has to be bookmarkable. It is not the `8420` that `just run`
+uses: those are both dashboards, and sharing a port means whichever starts second fails to bind. To
+change it, set `service_port` in the `Justfile` and re-run `just install-service`.
+
+The rest:
+
+    just service-logs      # journalctl -f for the service
+    just restart-service   # after a `cargo install --path .`
+    just uninstall-service # stop, disable, remove the unit
+
+By default a user session's units stop when you log out. To keep the dashboard running across
+logouts and start it at boot:
+
+    sudo loginctl enable-linger $USER
+
+If your `gh` credentials live in a keyring unlocked by your graphical session, change `WantedBy` to
+`graphical-session.target` so the service starts after the keyring rather than racing it.
+
+Unlike everything under Development below, these recipes run on the host, not in the container: a
+systemd user unit has to live in your real session to see your login.
+
 ## Development
 
 A devcontainer is included. It builds on `rust:latest` with `mise`, the pinned tool versions from

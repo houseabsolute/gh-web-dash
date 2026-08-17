@@ -1,0 +1,19 @@
+# A systemd *user* service: it starts at login, runs as you, and so can reach
+# your `gh` credentials and your ~/.config/gh-web-dash. Install it with
+# `just install-service`, which substitutes the port from the Justfile.
+[Unit]
+Description=gh-web-dash — local GitHub Actions dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# --no-open because a service must not launch a browser at every login or
+# restart, and a fixed port because a dashboard you leave running has to be
+# bookmarkable — the default OS-assigned port changes on every restart. No
+# --host: the default 127.0.0.1 bind keeps it to this machine.
+ExecStart=%h/.cargo/bin/gh-web-dash --no-open --port 8421
+Restart=on-failure
+RestartSec=10s
+
+[Install]
+WantedBy=default.target
