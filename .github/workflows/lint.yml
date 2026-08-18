@@ -17,13 +17,6 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        toolchain:
-          - stable
-          - beta
-          - nightly
     steps:
       - uses: actions/checkout@v6
       - name: Cache cargo & target directories
@@ -31,7 +24,7 @@ jobs:
       - name: Install toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: stable
           components: clippy,rustfmt
       - name: Install mise
         run: |
