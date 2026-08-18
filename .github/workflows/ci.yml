@@ -6,6 +6,12 @@ on:
       - "**"
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: {}
+
 env:
   CRATE_NAME: gh-web-dash
   GITHUB_TOKEN: ${{ github.token }}
@@ -15,6 +21,8 @@ jobs:
   test:
     name: ${{ matrix.platform.os-name }} with rust ${{ matrix.toolchain }}
     runs-on: ${{ matrix.platform.runs-on }}
+    permissions:
+      contents: read # to check out the repo
     strategy:
       fail-fast: false
       matrix:
@@ -40,12 +48,21 @@ jobs:
               runs-on: ubuntu-24.04
             toolchain: nightly
     steps:
-      - uses: actions/checkout@v6
-      - name: Cache cargo & target directories
-        uses: Swatinem/rust-cache@v2
-      - name: Install toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          toolchain: ${{ matrix.toolchain }}
+          persist-credentials: false
+      # The runners ship rustup, so there is no need for a third-party action
+      # here. bash is used on every platform so the script is identical.
+      - name: Install toolchain
+        shell: bash
+        run: |
+          rustup toolchain install "$TOOLCHAIN" --profile minimal --no-self-update
+          rustup default "$TOOLCHAIN"
+        env:
+          TOOLCHAIN: ${{ matrix.toolchain }}
+      # This has to come after the toolchain is selected, since rust-cache keys
+      # its cache off the active rustc version.
+      - name: Cache cargo & target directories
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run tests
         run: cargo test --locked --all-features

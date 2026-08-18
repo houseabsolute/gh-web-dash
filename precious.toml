@@ -85,3 +85,15 @@ tidy_flags = "--write-changes"
 invoke = "once"
 ok-exit-codes = 0
 lint-failure-exit-codes = 2
+
+# zizmor only audits, so there is no tidy counterpart. It exits 11-14 when it
+# has findings (one code per severity), and logs progress to stderr even on
+# success.
+[commands.zizmor]
+type = "lint"
+include = [".github/**/*.yml", ".github/**/*.yaml"]
+invoke = "once"
+cmd = ["zizmor", "--persona", "pedantic"]
+ok-exit-codes = 0
+lint-failure-exit-codes = [11, 12, 13, 14]
+expect-stderr = true
