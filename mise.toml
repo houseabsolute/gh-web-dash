@@ -1,15 +1,16 @@
 [tools]
-just = "1.57.0"
+just = "1.58.0"
 # oxfmt is an npm package, so it needs a node runtime. Without this the
 # container has no node and oxfmt dies with exit 127 — GitHub runners happen to
 # ship node, so CI does not notice.
-node = "26.5.1"
-"npm:@devcontainers/cli" = "0.88.0"
-"npm:oxfmt" = "0.61.0"
-typos = "1.48.0"
-zizmor = "1.29.0"
-"github:houseabsolute/omegasort" = "0.1.3"
-"github:houseabsolute/precious" = "0.11.0"
+node = "26.10.0"
+"npm:@devcontainers/cli" = "0.89.0"
+"npm:oxfmt" = "0.72.0"
+typos = "1.50.3"
+zizmor = "1.30.1"
+"cargo:cargo-edit" = "0.13.13"
+"github:houseabsolute/omegasort" = "0.2.1"
+"github:houseabsolute/precious" = "1.0.0"
 
 [settings]
 minimum_release_age = "3d"
