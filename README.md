@@ -69,7 +69,8 @@ config and the same database as your host — your ignore globs apply, and there
 The database is opened in WAL mode so a poller on each side does not lock the other out, but note
 that anything you mute or force-include from a container run lands in your real dashboard.
 
-There is a `Justfile` wrapping the common tasks, each running inside the container:
+There is a `Justfile` wrapping the common tasks. Unless noted, each runs inside the container, and
+they also work from a shell that is already inside it:
 
     just auth          # gh auth login, inside the container
     just test          # cargo test
@@ -78,7 +79,8 @@ There is a `Justfile` wrapping the common tasks, each running inside the contain
     just run           # the dashboard, on port 8420
     just shell         # a shell in the container
     just ci            # everything CI checks
-    just rebuild       # recreate the container
+    just rebuild       # recreate the container (on the host)
+    just upgrade-deps  # upgrade Rust deps and mise tools (on the host)
 
 Or directly, without a container:
 

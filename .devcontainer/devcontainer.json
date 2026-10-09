@@ -7,6 +7,9 @@
   "containerUser": "dev",
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "containerEnv": {
+    "GH_WEB_DASH_DEVCONTAINER": "1"
+  },
   "postCreateCommand": ".devcontainer/post-create.sh",
   "forwardPorts": [
     8420
