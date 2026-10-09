@@ -203,7 +203,7 @@ async fn history_requires_a_repo_parameter() {
 #[tokio::test]
 async fn history_of_an_unknown_repo_is_empty_not_an_error() {
     let v = get_json("/api/history?repo=autarch/nope").await;
-    assert!(v["workflows"].as_array().unwrap().is_empty());
+    assert_eq!(v["workflows"], serde_json::json!([]));
 }
 
 #[tokio::test]

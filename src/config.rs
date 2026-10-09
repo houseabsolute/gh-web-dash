@@ -103,7 +103,7 @@ mod tests {
         let c = Config::from_toml("").unwrap();
         assert_eq!(c.poll_interval_secs, 180);
         assert!(c.include_orgs);
-        assert!(c.ignore.is_empty());
+        assert_eq!(c.ignore, Vec::<String>::new());
     }
 
     #[test]

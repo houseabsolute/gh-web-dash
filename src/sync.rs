@@ -254,6 +254,10 @@ mod tests {
     }
 
     fn runs_body(id: i64, branch: &str, login: &str, actor_type: &str) -> serde_json::Value {
+        // Relative to now, because `sync_runs` prunes anything older than RETENTION_DAYS. A fixed
+        // date makes these tests start failing once it ages out.
+        let started = Utc::now() - Duration::hours(1);
+        let updated = started + Duration::minutes(5);
         serde_json::json!({
             "workflow_runs": [{
                 "id": id,
@@ -263,8 +267,8 @@ mod tests {
                 "conclusion": "success",
                 "head_sha": "abc123",
                 "html_url": format!("https://github.com/autarch/a/actions/runs/{id}"),
-                "run_started_at": "2026-08-04T10:00:00Z",
-                "updated_at": "2026-08-04T10:05:00Z",
+                "run_started_at": started.to_rfc3339(),
+                "updated_at": updated.to_rfc3339(),
                 "actor": {"login": login, "type": actor_type},
                 "head_commit": {"message": "Do a thing"}
             }]
