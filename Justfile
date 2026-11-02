@@ -86,10 +86,11 @@ ci: lint
 # `cargo upgrade` knows nothing about release ages and always picks the newest version, and
 # `cargo update --breaking` ignores the age limit too. So we pick each version ourselves, from the
 # publish times in the crates.io index, and give `cargo upgrade` that exact version. cargo-edit
-# writes an explicit version as given, even across a semver-breaking boundary. This only looks at
-# requirements written as a full version, like "1.2.3". Ones that are deliberately loose, like
-# "0.4", are left alone. Nothing here checks `rust-version`, so a bump that needs a newer Rust
-# shows up when building.
+# writes an explicit version as given, even across a semver-breaking boundary. A short
+# requirement, like "0.8", keeps its shape, so the new version is cut down to the same number of
+# parts, like "0.9", and used if it is greater than the requirement. So "1" only moves for a new
+# major version, while "1.2" also moves to "1.3". Nothing here checks `rust-version`, so a bump
+# that needs a newer Rust shows up when building.
 #
 # This runs on the host, because it needs jq, which is not in the dev container.
 [doc("Upgrade Rust deps and mise tools, skipping releases under three days old")]
@@ -118,10 +119,12 @@ upgrade-deps: (_host_only "upgrade-deps")
             # compares against the highest requirement, so that none of them is lowered.
             [.packages[].dependencies[]
                 | select(.source == $crates_io)
-                | select(.req | test("^\\^?[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                | select(.req | test("^\\^?[0-9]+(\\.[0-9]+){0,2}$"))
                 | {name, req: (.req | ltrimstr("^"))}]
             | group_by(.name)
-            | map(max_by(.req | split(".") | map(tonumber)))
+            # Padding makes "1.2" sort below "1.10" rather than by string. On a tie, like "1" and
+            # "1.0.0", the one with more parts wins, so the more precise table still gets bumped.
+            | map(max_by(.req | split(".") | map(tonumber) | (. + [0, 0])[:3] + [length]))
             | .[]
             | "\(.name) \(.req)"
         ')
@@ -139,15 +142,17 @@ upgrade-deps: (_host_only "upgrade-deps")
         version=$(printf '%s\n' "$index" |
             mise exec -- jq -rs --arg cur "$req" --argjson age "$age_days" '
                 def v: sub("\\+.*$"; "") | split(".") | map(tonumber);
-                [.[]
+                ($cur | v) as $cur
+                | [.[]
                     | select(.yanked | not)
                     | select(.vers | test("^[0-9]+\\.[0-9]+\\.[0-9]+(\\+.*)?$"))
                     | select((.pubtime // "1970-01-01T00:00:00Z" | fromdateiso8601)
                         <= now - $age * 86400)]
                 | max_by(.vers | v) // empty
-                | select((.vers | v) > ($cur | v))
-                | .vers
-                | sub("\\+.*$"; "")
+                | (.vers | v)[:($cur | length)]
+                | select(. > $cur)
+                | map(tostring)
+                | join(".")
             ')
         if [ -n "$version" ]; then
             packages+=("--package=$name@$version")
