@@ -1,6 +1,6 @@
 # Everything but the host-only recipes runs inside the devcontainer, so a checkout needs nothing
 # but just, mise, and a container runtime. The one exception is `upgrade-deps`, which also needs
-# cargo and jq on the host.
+# cargo, curl, and jq on the host.
 
 # Set by devcontainer.json, so recipes can tell whether they are already running inside the dev
 # container. Outside it, everything is wrapped in `devcontainer exec`. Inside, there is nothing to
@@ -77,15 +77,19 @@ ci: lint
 # three days old. Brand new releases are where a compromised package is most likely to show up, and
 # a short wait gives the ecosystem time to notice and yank it.
 #
-# For mise, the cutoff comes from `minimum_release_age` in mise.toml. Keep the two ages in sync.
+# For mise, the cutoff comes from `minimum_release_age` in mise.toml. Keep it and `age_days` below
+# in sync.
 #
 # Cargo's version of this is still unstable. RUSTC_BOOTSTRAP is what lets a stable cargo accept
 # the -Z flag, so this does not need a nightly toolchain, but it does need cargo 1.99 or newer.
 #
-# `cargo upgrade` knows nothing about release ages and always picks the newest version. So rather
-# than letting it choose, we update Cargo.lock with the age limit first, and then tell `cargo
-# upgrade` to set each requirement in Cargo.toml to the version that ended up in the lockfile.
-# Requirements that are deliberately loose, like "0.4", are left alone.
+# `cargo upgrade` knows nothing about release ages and always picks the newest version, and
+# `cargo update --breaking` ignores the age limit too. So we pick each version ourselves, from the
+# publish times in the crates.io index, and give `cargo upgrade` that exact version. cargo-edit
+# writes an explicit version as given, even across a semver-breaking boundary. This only looks at
+# requirements written as a full version, like "1.2.3". Ones that are deliberately loose, like
+# "0.4", are left alone. Nothing here checks `rust-version`, so a bump that needs a newer Rust
+# shows up when building.
 #
 # This runs on the host, because it needs jq, which is not in the dev container.
 [doc("Upgrade Rust deps and mise tools, skipping releases under three days old")]
@@ -93,37 +97,74 @@ upgrade-deps: (_host_only "upgrade-deps")
     #!/usr/bin/env bash
     set -euo pipefail
     export RUSTC_BOOTSTRAP=1
-    mise exec -- cargo update -Z min-publish-age \
-        --config 'registry.global-min-publish-age="3 days"'
-    packages=$(mise exec -- cargo metadata --format-version 1 | mise exec -- jq -r '
-        . as $md
-        | ([$md.resolve.nodes[] | select(.id | IN($md.workspace_members[])) | .deps[].pkg]
-            | unique) as $ids
-        | ([$md.packages[] | select(.id | IN($ids[])) | {key: .name, value: .version}]
-            | from_entries) as $locked
-        | [$md.packages[]
-            | select(.id | IN($md.workspace_members[]))
-            | .dependencies[]
-            | select(.source != null and (.req | test("^\\^?[0-9]+\\.[0-9]+\\.[0-9]+$")))
-            | "--package=\(.name)@\($locked[.name])"]
-        | unique
-        | .[]
-    ')
-    # With no --package arguments, `cargo upgrade` would upgrade everything to the newest release,
-    # which is exactly what the age limit is there to prevent.
-    if [ -n "$packages" ]; then
-        # `cargo upgrade` re-resolves the lockfile without the age limit, even with `--recursive
-        # false`. The lockfile we already have still satisfies the new requirements, so put it
-        # back.
-        # The restore is in the trap so that it also happens when `cargo upgrade` fails.
-        lock=$(mktemp)
-        cp Cargo.lock "$lock"
-        trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
-        # shellcheck disable=SC2086 # one argument per line of $packages
-        mise exec -- cargo upgrade --incompatible --recursive false $packages
-        cp "$lock" Cargo.lock
+    age_days=3
+    crates_io="registry+https://github.com/rust-lang/crates.io-index"
+    # See https://doc.rust-lang.org/cargo/reference/registry-index.html for the path layout.
+    index_path() {
+        local name
+        name=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+        case ${#name} in
+        1) echo "1/$name" ;;
+        2) echo "2/$name" ;;
+        3) echo "3/${name:0:1}/$name" ;;
+        *) echo "${name:0:2}/${name:2:2}/$name" ;;
+        esac
+    }
+    # This is captured before the loop, rather than fed to it with `< <(...)`, because a failure in
+    # a process substitution doesn't stop the script.
+    deps=$(mise exec -- cargo metadata --no-deps --format-version 1 |
+        mise exec -- jq -r --arg crates_io "$crates_io" '
+            # cargo-edit applies an explicit version to every table that has the crate, so this
+            # compares against the highest requirement, so that none of them is lowered.
+            [.packages[].dependencies[]
+                | select(.source == $crates_io)
+                | select(.req | test("^\\^?[0-9]+\\.[0-9]+\\.[0-9]+$"))
+                | {name, req: (.req | ltrimstr("^"))}]
+            | group_by(.name)
+            | map(max_by(.req | split(".") | map(tonumber)))
+            | .[]
+            | "\(.name) \(.req)"
+        ')
+    packages=()
+    while read -r name req; do
+        [ -n "$name" ] || continue
+        # Prereleases and yanked versions are never picked. A version that isn't newer than what
+        # Cargo.toml already asks for is skipped too, so a requirement someone raised by hand to a
+        # version that is still too new isn't lowered. Build metadata is dropped from the result,
+        # since cargo warns about it in a requirement.
+        index=$(curl -fsS --retry 3 "https://index.crates.io/$(index_path "$name")") || {
+            echo "Could not fetch the crates.io index entry for $name" >&2
+            exit 1
+        }
+        version=$(printf '%s\n' "$index" |
+            mise exec -- jq -rs --arg cur "$req" --argjson age "$age_days" '
+                def v: sub("\\+.*$"; "") | split(".") | map(tonumber);
+                [.[]
+                    | select(.yanked | not)
+                    | select(.vers | test("^[0-9]+\\.[0-9]+\\.[0-9]+(\\+.*)?$"))
+                    | select((.pubtime // "1970-01-01T00:00:00Z" | fromdateiso8601)
+                        <= now - $age * 86400)]
+                | max_by(.vers | v) // empty
+                | select((.vers | v) > ($cur | v))
+                | .vers
+                | sub("\\+.*$"; "")
+            ')
+        if [ -n "$version" ]; then
+            packages+=("--package=$name@$version")
+        fi
+    done <<<"$deps"
+    # With no `--package` arguments, `cargo upgrade` upgrades every dependency to its latest
+    # version, which ignores the age limit. So skip it when there is nothing to upgrade.
+    if [ "${#packages[@]}" -gt 0 ]; then
+        mise exec -- cargo upgrade --incompatible --recursive false "${packages[@]}"
+    else
+        echo "No Rust dependencies to upgrade in Cargo.toml" >&2
     fi
-    mise exec -- cargo metadata --locked --format-version 1 >/dev/null
+    # `cargo upgrade` re-resolves the lockfile without the age limit, even with `--recursive
+    # false`, so this comes last. It also brings the transitive and loosely required dependencies
+    # up to date, and moves anything too new back down.
+    mise exec -- cargo update -Z min-publish-age \
+        --config "registry.global-min-publish-age=\"$age_days days\""
     mise upgrade --bump
 
 # --- The installed service. These run on the host, not in the container: a
